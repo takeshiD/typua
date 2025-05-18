@@ -1,7 +1,15 @@
 [package]
 name = "typua"
+authors = ["tkcs <goriponikeike55@gmail.com>"]
+description = "Type checker and language-server for Lua"
 version = "0.0.1"
 edition = "2024"
+repository = "https://github.com/takeshid/typua"
+license = "MIT"
+readme = "README.md"
+categories = ["command-line-utilities", "development-tools"]
+keywords = ["cli", "utility", "lua", "lua51", "type-checker"]
+exclude = ["tests/**"]
 
 [dependencies]
 anyhow = "1.0.98"
