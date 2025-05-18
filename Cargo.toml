@@ -22,8 +22,3 @@ name = "typua_lib"
 path = "src/lib.rs"
 crate-type = ["cdylib", "rlib"]
 bench = false
-
-[[bin]]
-name = "typua"
-path = "src/cli/main.rs"
-bench = false
