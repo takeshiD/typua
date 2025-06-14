@@ -1,3 +1,9 @@
+use anyhow::{Result, anyhow};
+use full_moon::{
+    ast::{BinOp, Expression, UnOp},
+    tokenizer::{Symbol, TokenType},
+};
+
 #[derive(Debug, PartialEq)]
 pub enum Type {
     Nil,
@@ -20,28 +26,22 @@ pub struct FunctionType {
     ret_ty: Box<Type>,
 }
 
-pub fn typecheck(expr: &full_moon::ast::Expression) -> Result<Type, String> {
-    use full_moon::ast::{BinOp, Expression};
-    use full_moon::tokenizer::{Symbol, TokenType};
+pub fn typecheck(expr: &full_moon::ast::Expression) -> Result<Type> {
     match &expr {
         Expression::Number(tknref) => match &tknref.token_type() {
-            TokenType::Number { text } => Ok(Type::Number),
+            TokenType::Number { .. } => Ok(Type::Number),
             _ => {
                 let token_type = tknref.token_type();
                 let err_string = format!("Expected Number Type. But actually got {:?}", token_type);
-                Err(err_string)
+                Err(anyhow!(err_string))
             }
         },
         Expression::String(tknref) => match &tknref.token_type() {
-            TokenType::StringLiteral {
-                literal,
-                multi_line_depth,
-                quote_type,
-            } => Ok(Type::String),
+            TokenType::StringLiteral { .. } => Ok(Type::String),
             _ => {
                 let token_type = tknref.token_type();
                 let err_string = format!("Expected String Type. But actually got {:?}", token_type);
-                Err(err_string)
+                Err(anyhow!(err_string))
             }
         },
         Expression::Symbol(tknref) => match &tknref.token_type() {
@@ -52,15 +52,16 @@ pub fn typecheck(expr: &full_moon::ast::Expression) -> Result<Type, String> {
                     let token_type = tknref.token_type();
                     let err_string =
                         format!("Expected Symbol Type. But actually got {:?}", token_type);
-                    Err(err_string)
+                    Err(anyhow!(err_string))
                 }
             },
             _ => {
                 let token_type = tknref.token_type();
                 let err_string = format!("Expected Symbol Type. But actually got {:?}", token_type);
-                Err(err_string)
+                Err(anyhow!(err_string))
             }
         },
+        Expression::TableConstructor(_) => Ok(Type::Table),
         Expression::BinaryOperator { lhs, binop, rhs } => {
             let lhs_ty = typecheck(lhs.as_ref())?;
             let rhs_ty = typecheck(rhs.as_ref())?;
@@ -72,7 +73,7 @@ pub fn typecheck(expr: &full_moon::ast::Expression) -> Result<Type, String> {
                             _ => {
                                 let err_string =
                                     format!("Expected Arithmetic type. Got {:?}", lhs_ty);
-                                Err(err_string)
+                                Err(anyhow!(err_string))
                             }
                         }
                     } else {
@@ -80,27 +81,46 @@ pub fn typecheck(expr: &full_moon::ast::Expression) -> Result<Type, String> {
                             "Different type, Got left is {:?}, right is {:?}.",
                             lhs_ty, rhs_ty
                         );
-                        Err(err_string)
+                        Err(anyhow!(err_string))
                     }
                 }
-                _ => Err("Not unimplemented".to_string()),
+                _ => Err(anyhow!("Not unimplemented")),
             }
         }
-        // Expression::Parentheses {
-        //     contained,
-        //     expression,
-        // } => {}
-        // Expression::UnaryOperator { unop, expression } => {}
-        _ => unimplemented!(),
+        Expression::UnaryOperator { unop, expression } => {
+            let ty = typecheck(expression)?;
+            match unop {
+                UnOp::Minus(_) => match ty {
+                    Type::Number => Ok(Type::Number),
+                    _ => Err(anyhow!("Expected Number for 'Minus' unary operator")),
+                },
+                UnOp::Not(_) => match ty {
+                    Type::Boolean => Ok(Type::Boolean),
+                    _ => Err(anyhow!("Expected Boolean for 'Not' unary operator")),
+                },
+                UnOp::Hash(_) => match ty {
+                    Type::Table => Ok(Type::Number),
+                    Type::String => Ok(Type::Number),
+                    _ => Err(anyhow!(
+                        "Expected Table or String for 'Hash' unary operator"
+                    )),
+                },
+                // UnOp::Tilde(_) => {}
+                _ => Err(anyhow!("Not unimplemtend")),
+            }
+        }
+        _ => Err(anyhow!("Not unimplemtend: got {:#?}", expr)),
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use full_moon::ShortString;
-    use full_moon::ast::{BinOp, Expression};
-    use full_moon::tokenizer::{Symbol, Token, TokenReference, TokenType};
+    use full_moon::{
+        ShortString,
+        ast::{BinOp, Expression, TableConstructor},
+        tokenizer::{StringLiteralQuoteType, Symbol, Token, TokenReference, TokenType},
+    };
 
     #[test]
     fn test_number() {
@@ -111,7 +131,7 @@ mod tests {
             }),
             vec![],
         ));
-        assert_eq!(typecheck(&expr1), Ok(Type::Number));
+        assert_eq!(typecheck(&expr1).unwrap(), Type::Number);
         let expr1 = Expression::Number(TokenReference::new(
             vec![],
             Token::new(TokenType::Number {
@@ -119,7 +139,7 @@ mod tests {
             }),
             vec![],
         ));
-        assert_eq!(typecheck(&expr1), Ok(Type::Number));
+        assert_eq!(typecheck(&expr1).unwrap(), Type::Number);
     }
 
     #[test]
@@ -148,7 +168,7 @@ mod tests {
                 vec![],
             ))),
         };
-        assert_eq!(typecheck(&expr1), Ok(Type::Number));
+        assert_eq!(typecheck(&expr1).unwrap(), Type::Number);
 
         // error-test: Number + Boolean
         let expr2 = Expression::BinaryOperator {
@@ -175,8 +195,8 @@ mod tests {
             ))),
         };
         assert_eq!(
-            typecheck(&expr2),
-            Err("Different type, Got left is Number, right is Boolean.".to_string())
+            typecheck(&expr2).unwrap_err().to_string(),
+            "Different type, Got left is Number, right is Boolean.".to_string()
         );
 
         // error-test: Boolean + Number
@@ -198,14 +218,14 @@ mod tests {
             rhs: Box::new(Expression::Number(TokenReference::new(
                 vec![],
                 Token::new(TokenType::Number {
-                    text: ShortString::new("1")
+                    text: ShortString::new("1"),
                 }),
                 vec![],
             ))),
         };
         assert_eq!(
-            typecheck(&expr3),
-            Err("Different type, Got left is Boolean, right is Number.".to_string())
+            typecheck(&expr3).unwrap_err().to_string(),
+            "Different type, Got left is Boolean, right is Number.".to_string()
         );
 
         // error-test: Boolean + Boolean
@@ -233,8 +253,151 @@ mod tests {
             ))),
         };
         assert_eq!(
-            typecheck(&expr4),
-            Err("Expected Arithmetic type. Got Boolean".to_string())
+            typecheck(&expr4).unwrap_err().to_string(),
+            "Expected Arithmetic type. Got Boolean".to_string()
+        );
+    }
+
+    #[test]
+    fn test_unaryop() {
+        // Minus Operator
+        // normal-test: '-' + Number
+        let expr = Expression::UnaryOperator {
+            unop: UnOp::Minus(TokenReference::new(
+                vec![],
+                Token::new(TokenType::Symbol {
+                    symbol: Symbol::Minus,
+                }),
+                vec![],
+            )),
+            expression: Box::new(Expression::Number(TokenReference::new(
+                vec![],
+                Token::new(TokenType::Number {
+                    text: ShortString::new("12"),
+                }),
+                vec![],
+            ))),
+        };
+        assert_eq!(typecheck(&expr).unwrap(), Type::Number);
+        // error-test: '-' + NotNumber
+        let expr = Expression::UnaryOperator {
+            unop: UnOp::Minus(TokenReference::new(
+                vec![],
+                Token::new(TokenType::Symbol {
+                    symbol: Symbol::Minus,
+                }),
+                vec![],
+            )),
+            expression: Box::new(Expression::Symbol(TokenReference::new(
+                vec![],
+                Token::new(TokenType::Symbol {
+                    symbol: Symbol::True,
+                }),
+                vec![],
+            ))),
+        };
+        assert_eq!(
+            typecheck(&expr).unwrap_err().to_string(),
+            "Expected Number for 'Minus' unary operator".to_string(),
+        );
+
+        // Not Operator
+        // normal-test: 'not' + Boolean
+        let expr = Expression::UnaryOperator {
+            unop: UnOp::Not(TokenReference::new(
+                vec![],
+                Token::new(TokenType::Symbol {
+                    symbol: Symbol::Not,
+                }),
+                vec![],
+            )),
+            expression: Box::new(Expression::Symbol(TokenReference::new(
+                vec![],
+                Token::new(TokenType::Symbol {
+                    symbol: Symbol::True,
+                }),
+                vec![],
+            ))),
+        };
+        assert_eq!(typecheck(&expr).unwrap(), Type::Boolean);
+
+        // error-test: 'not' + NotBoolean
+        let expr = Expression::UnaryOperator {
+            unop: UnOp::Not(TokenReference::new(
+                vec![],
+                Token::new(TokenType::Symbol {
+                    symbol: Symbol::Not,
+                }),
+                vec![],
+            )),
+            expression: Box::new(Expression::Number(TokenReference::new(
+                vec![],
+                Token::new(TokenType::Number {
+                    text: ShortString::new("12"),
+                }),
+                vec![],
+            ))),
+        };
+        assert_eq!(
+            typecheck(&expr).unwrap_err().to_string(),
+            "Expected Boolean for 'Not' unary operator".to_string(),
+        );
+
+        // Hash Operator
+        // normal-test: '#' + Table
+        let expr = Expression::UnaryOperator {
+            unop: UnOp::Hash(TokenReference::new(
+                vec![],
+                Token::new(TokenType::Symbol {
+                    symbol: Symbol::Hash,
+                }),
+                vec![],
+            )),
+            expression: Box::new(Expression::TableConstructor(TableConstructor::new())),
+        };
+        assert_eq!(typecheck(&expr).unwrap(), Type::Number);
+
+        // normal-test: '#' + String
+        let expr = Expression::UnaryOperator {
+            unop: UnOp::Hash(TokenReference::new(
+                vec![],
+                Token::new(TokenType::Symbol {
+                    symbol: Symbol::Hash,
+                }),
+                vec![],
+            )),
+            expression: Box::new(Expression::String(TokenReference::new(
+                vec![],
+                Token::new(TokenType::StringLiteral {
+                    literal: ShortString::new("hello"),
+                    multi_line_depth: 0,
+                    quote_type: StringLiteralQuoteType::Single,
+                }),
+                vec![],
+            ))),
+        };
+        assert_eq!(typecheck(&expr).unwrap(), Type::Number,);
+
+        // normal-test: '#' + Boolean
+        let expr = Expression::UnaryOperator {
+            unop: UnOp::Hash(TokenReference::new(
+                vec![],
+                Token::new(TokenType::Symbol {
+                    symbol: Symbol::Hash,
+                }),
+                vec![],
+            )),
+            expression: Box::new(Expression::Symbol(TokenReference::new(
+                vec![],
+                Token::new(TokenType::Symbol {
+                    symbol: Symbol::True,
+                }),
+                vec![],
+            ))),
+        };
+        assert_eq!(
+            typecheck(&expr).unwrap_err().to_string(),
+            "Expected Table or String for 'Hash' unary operator".to_string(),
         );
     }
 }
