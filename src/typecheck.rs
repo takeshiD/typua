@@ -1,26 +1,41 @@
-use anyhow::{Result, anyhow};
+use anyhow::{Context, Result, anyhow};
+use core::panic;
 use full_moon::{
-    ast::{Assignment, BinOp, Block, Expression, Stmt, UnOp, Var},
+    ast::{Ast, BinOp, Block, Expression, LastStmt, Parameter, Stmt, UnOp, Var},
     tokenizer::{Symbol, TokenType},
 };
 use std::collections::BTreeMap;
 
 #[derive(Debug, PartialEq, Clone)]
 pub enum Type {
+    Unknown,
     None,
     Any,
     Nil,
     Boolean,
     Number,
     String,
+    Array,
     Table,
-    // Function(FunctionType),
+    Function(FunctionType),
+    MultiValue(MultiValueType),
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
+pub struct FunctionType {
+    params: Vec<Param>,
+    ret_ty: Box<Option<Type>>,
+}
+
+#[derive(Debug, PartialEq, Clone)]
 pub struct Param {
     symbol: String,
     ty: Type,
+}
+
+#[derive(Debug, PartialEq, Clone)]
+pub struct MultiValueType {
+    types: Vec<Type>,
 }
 
 type TypeEnv = BTreeMap<String, Option<Type>>;
@@ -43,11 +58,10 @@ impl TypeEnvStack {
         self.envs.insert(self.depth, BTreeMap::new());
     }
     pub fn pop_env(&mut self) {
-        self.depth -= 1;
         self.envs.remove(&self.depth);
+        self.depth -= 1;
     }
     pub fn bind(&mut self, name: String, type_: Type) {
-        println!("Env: {:#?}", self.envs);
         if let Some(current_env) = self.envs.get_mut(&self.depth) {
             current_env.insert(name, Some(type_));
         } else {
@@ -58,9 +72,9 @@ impl TypeEnvStack {
             );
         }
     }
-    pub fn lookup(&mut self, name: &str) -> Option<Type> {
-        for (_, env) in self.envs.iter_mut().rev() {
-            if let Some(ty) = env.get_mut(name) {
+    pub fn lookup(&self, name: &str) -> Option<Type> {
+        for (_, env) in self.envs.iter().rev() {
+            if let Some(ty) = env.get(name) {
                 return ty.clone();
             }
         }
@@ -71,28 +85,34 @@ impl TypeEnvStack {
     }
 }
 
-#[derive(Debug, PartialEq)]
-pub struct FunctionType {
-    params: Vec<Param>,
-    ret_ty: Box<Type>,
+pub fn typecheck(
+    _local_env: &mut TypeEnvStack,
+    _global_env: &mut TypeEnvStack,
+    _ast: &Ast,
+) -> Option<Type> {
+    unimplemented!()
 }
 
 pub fn typecheck_block(
     local_env: &mut TypeEnvStack,
     global_env: &mut TypeEnvStack,
     block: &Block,
-) -> Result<Type> {
+) -> Option<Type> {
     for stmt in block.stmts() {
-        let stmt_type = typecheck_stmt(local_env, global_env, stmt)?;
+        let _ = typecheck_stmt(local_env, global_env, stmt);
     }
-    Ok(Type::None)
+    if let Some(last_stmt) = block.last_stmt() {
+        typecheck_last_stmt(local_env, global_env, last_stmt)
+    } else {
+        None
+    }
 }
 
 pub fn typecheck_stmt(
     local_env: &mut TypeEnvStack,
     global_env: &mut TypeEnvStack,
     stmt: &Stmt,
-) -> Result<Type> {
+) -> Option<Type> {
     match &stmt {
         Stmt::Assignment(assign) => {
             let names = assign.variables().iter().map(|var| {
@@ -109,10 +129,9 @@ pub fn typecheck_stmt(
             let expressions = assign.expressions().iter();
             for (name, expr) in names.zip(expressions) {
                 let ty = typecheck_expr(local_env, global_env, expr);
-                println!("{name} = {ty:?}");
                 global_env.bind(name, ty.unwrap());
             }
-            Ok(Type::None)
+            None
         }
         Stmt::LocalAssignment(local_assign) => {
             let names = local_assign.names().iter().map(|tknref| {
@@ -125,25 +144,113 @@ pub fn typecheck_stmt(
             let expressions = local_assign.expressions().iter();
             for (name, expr) in names.zip(expressions) {
                 let ty = typecheck_expr(local_env, global_env, expr);
-                println!("local '{name}' = {ty:?}");
-                // local_env.bind(name, typecheck_expr(local_env, global_env, expr)?);
                 local_env.bind(name, ty.unwrap());
             }
-            println!(
-                "depth: {}, len: {}, lookup: {:?}",
-                local_env.depth.clone(),
-                local_env.envs.len(),
-                local_env.lookup("a")
-            );
-            Ok(Type::None)
+            None
+        }
+        Stmt::FunctionDeclaration(func_dec) => {
+            local_env.push_env();
+            // only global funciton, not working class method and children function on table
+            let func_name = func_dec.name().names().first().unwrap().to_string();
+            let params: Vec<Param> = func_dec
+                .body()
+                .parameters()
+                .iter()
+                .map(|param| {
+                    if let Parameter::Name(tknref) = param {
+                        if let TokenType::Identifier { identifier } = tknref.token_type() {
+                            Param {
+                                symbol: identifier.to_string(),
+                                ty: Type::Unknown,
+                            }
+                        } else {
+                            panic!("Invalid token type")
+                        }
+                    } else {
+                        panic!("Invalid paramters")
+                    }
+                })
+                .collect();
+            for param in params.iter() {
+                local_env.bind(param.symbol.clone(), param.ty.clone());
+            }
+            let ret_ty = typecheck_block(local_env, global_env, func_dec.body().block());
+            let func_ty = Type::Function(FunctionType {
+                params,
+                ret_ty: Box::new(ret_ty),
+            });
+            global_env.bind(func_name, func_ty);
+            local_env.pop_env();
+            None
+        }
+        Stmt::LocalFunction(local_func_dec) => {
+            local_env.push_env();
+            let func_name = local_func_dec.name().to_string();
+            let params: Vec<Param> = local_func_dec
+                .body()
+                .parameters()
+                .iter()
+                .map(|param| {
+                if let Parameter::Name(tknref) = param {
+                    if let TokenType::Identifier { identifier } = tknref.token_type() {
+                        Param {
+                            symbol: identifier.to_string(),
+                            ty: Type::Unknown,
+                        }
+                    } else {
+                        panic!("Invalid token type")
+                    }
+                } else {
+                    panic!("Invalid paramters")
+                }
+            }).collect();
+            for param in params.iter() {
+                local_env.bind(param.symbol.clone(), param.ty.clone());
+            }
+            let ret_ty = typecheck_block(local_env, global_env, local_func_dec.body().block());
+            let func_ty = Type::Function(FunctionType {
+                params,
+                ret_ty: Box::new(ret_ty),
+            });
+            local_env.pop_env();
+            local_env.bind(func_name, func_ty);
+            None
         }
         _ => panic!("not inplementend"),
     }
 }
 
+pub fn typecheck_last_stmt(
+    local_env: &mut TypeEnvStack,
+    global_env: &mut TypeEnvStack,
+    last_stmt: &LastStmt,
+) -> Option<Type> {
+    match &last_stmt {
+        LastStmt::Return(ret) => {
+            let ret_types: Vec<Type> = ret
+                .returns()
+                .iter()
+                .map(|expr| {
+                    typecheck_expr(local_env, global_env, expr)
+                        .unwrap_or_else(|e| panic!("Invalid return expression: {e}"))
+                })
+                .collect();
+            match ret_types.len() {
+                0 => Some(Type::None),
+                1 => Some(ret_types.first().unwrap().clone()),
+                _ => Some(Type::MultiValue(MultiValueType {
+                    types: ret_types.clone(),
+                })),
+            }
+        }
+        LastStmt::Break(_) => Some(Type::None),
+        _ => unimplemented!("unimplemented last statement"),
+    }
+}
+
 pub fn typecheck_expr(
-    _local_env: &TypeEnvStack,
-    _global_env: &TypeEnvStack,
+    local_env: &TypeEnvStack,
+    global_env: &TypeEnvStack,
     expr: &Expression,
 ) -> Result<Type> {
     match &expr {
@@ -182,8 +289,8 @@ pub fn typecheck_expr(
         },
         Expression::TableConstructor(_) => Ok(Type::Table),
         Expression::BinaryOperator { lhs, binop, rhs } => {
-            let lhs_ty = typecheck_expr(_local_env, _global_env, lhs.as_ref())?;
-            let rhs_ty = typecheck_expr(_local_env, _global_env, rhs.as_ref())?;
+            let lhs_ty = typecheck_expr(local_env, global_env, lhs.as_ref())?;
+            let rhs_ty = typecheck_expr(local_env, global_env, rhs.as_ref())?;
             match binop {
                 BinOp::Plus(_) | BinOp::Minus(_) => {
                     if lhs_ty == rhs_ty {
@@ -206,7 +313,7 @@ pub fn typecheck_expr(
             }
         }
         Expression::UnaryOperator { unop, expression } => {
-            let ty = typecheck_expr(_local_env, _global_env, expression)?;
+            let ty = typecheck_expr(local_env, global_env, expression)?;
             match unop {
                 UnOp::Minus(_) => match ty {
                     Type::Number => Ok(Type::Number),
@@ -227,6 +334,24 @@ pub fn typecheck_expr(
                 _ => Err(anyhow!("Not unimplemtend")),
             }
         }
+        Expression::Var(var) => match var {
+            Var::Expression(_) => Err(anyhow!("unimplemented")),
+            Var::Name(tknref) => {
+                let name = if let TokenType::Identifier { identifier } = tknref.token_type() {
+                    identifier.to_string()
+                } else {
+                    panic!("Invalid token type")
+                };
+                if let Some(local_ty) = local_env.lookup(&name) {
+                    Ok(local_ty)
+                } else if let Some(global_ty) = global_env.lookup(&name) {
+                    Ok(global_ty)
+                } else {
+                    Err(anyhow!("Not found type"))
+                }
+            }
+            _ => panic!("panic"),
+        },
         _ => Err(anyhow!("Not unimplemtend: got {:#?}", expr)),
     }
 }
@@ -576,7 +701,7 @@ mod tests {
         )
         .unwrap();
         for stmt in ast.nodes().stmts() {
-            typecheck_stmt(&mut local_env, &mut global_env, stmt).unwrap();
+            typecheck_stmt(&mut local_env, &mut global_env, stmt);
         }
         assert_eq!(global_env.lookup("a"), Some(Type::Number));
         assert_eq!(global_env.lookup("b"), Some(Type::String));
@@ -593,10 +718,81 @@ mod tests {
         )
         .unwrap();
         for stmt in ast.nodes().stmts() {
-            typecheck_stmt(&mut local_env, &mut global_env, stmt).unwrap();
+            typecheck_stmt(&mut local_env, &mut global_env, stmt);
         }
         assert_eq!(local_env.lookup("a"), Some(Type::Number));
         assert_eq!(local_env.lookup("b"), Some(Type::String));
     }
-
+    #[test]
+    fn test_global_function_declaration() {
+        let mut local_env = TypeEnvStack::new();
+        let mut global_env = TypeEnvStack::new();
+        let ast = full_moon::parse(
+            r#"
+        function minmax(x, y)
+            local a = 12
+            local b = 13
+            return x, y
+        end
+        "#,
+        )
+        .unwrap();
+        typecheck_block(&mut local_env, &mut global_env, ast.nodes());
+        assert_eq!(
+            global_env.lookup("minmax"),
+            Some(Type::Function(FunctionType {
+                params: vec![
+                    Param {
+                        symbol: "x".to_string(),
+                        ty: Type::Unknown
+                    },
+                    Param {
+                        symbol: "y".to_string(),
+                        ty: Type::Unknown
+                    }
+                ],
+                ret_ty: Box::new(Some(Type::MultiValue(MultiValueType {
+                    types: vec![Type::Unknown, Type::Unknown]
+                })))
+            }))
+        );
+        assert_eq!(local_env.lookup("a"), None);
+        assert_eq!(local_env.lookup("b"), None);
+    }
+    #[test]
+    fn test_local_function_declaration() {
+        let mut local_env = TypeEnvStack::new();
+        let mut global_env = TypeEnvStack::new();
+        let ast = full_moon::parse(
+            r#"
+        local function minmax(x, y)
+            local a = 12
+            local b = 13
+            return x, y
+        end
+        "#,
+        )
+        .unwrap();
+        typecheck_block(&mut local_env, &mut global_env, ast.nodes());
+        assert_eq!(
+            local_env.lookup("minmax"),
+            Some(Type::Function(FunctionType {
+                params: vec![
+                    Param {
+                        symbol: "x".to_string(),
+                        ty: Type::Unknown
+                    },
+                    Param {
+                        symbol: "y".to_string(),
+                        ty: Type::Unknown
+                    }
+                ],
+                ret_ty: Box::new(Some(Type::MultiValue(MultiValueType {
+                    types: vec![Type::Unknown, Type::Unknown]
+                })))
+            }))
+        );
+        assert_eq!(local_env.lookup("a"), None);
+        assert_eq!(local_env.lookup("b"), None);
+    }
 }
