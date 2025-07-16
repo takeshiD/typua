@@ -4,7 +4,7 @@ use full_moon::{
     ast::{Ast, BinOp, Block, Expression, LastStmt, Parameter, Stmt, UnOp, Var},
     tokenizer::{Symbol, TokenType},
 };
-use std::collections::BTreeMap;
+use std::{arch::global_asm, collections::BTreeMap};
 
 #[derive(Debug, PartialEq, Clone)]
 pub enum Type {
@@ -249,8 +249,8 @@ pub fn typecheck_last_stmt(
 }
 
 pub fn typecheck_expr(
-    local_env: &TypeEnvStack,
-    global_env: &TypeEnvStack,
+    local_env: &mut TypeEnvStack,
+    global_env: &mut TypeEnvStack,
     expr: &Expression,
 ) -> Result<Type> {
     match &expr {
@@ -352,6 +352,35 @@ pub fn typecheck_expr(
             }
             _ => panic!("panic"),
         },
+        Expression::Function(anonymous_func) => {
+            local_env.push_env();
+            let params: Vec<Param> = anonymous_func
+                .body()
+                .parameters()
+                .iter()
+                .map(|param| {
+                    if let Parameter::Name(tknref) = param {
+                        if let TokenType::Identifier { identifier } = tknref.token_type() {
+                            Param {
+                                symbol: identifier.to_string(),
+                                ty: Type::Unknown,
+                            }
+                        } else {
+                            panic!("Invalid token type")
+                        }
+                    } else {
+                        panic!("Invalid paramters")
+                    }
+                })
+                .collect();
+            for param in params.iter() {
+                local_env.bind(param.symbol.clone(), param.ty.clone());
+            }
+            let ret_ty = typecheck_block(local_env, global_env, anonymous_func.body().block());
+            let func_ty = Type::Function(FunctionType { params, ret_ty: Box::new(ret_ty) });
+            local_env.pop_env();
+            Ok(func_ty)
+        },
         _ => Err(anyhow!("Not unimplemtend: got {:#?}", expr)),
     }
 }
@@ -367,8 +396,8 @@ mod tests {
 
     #[test]
     fn test_number() {
-        let local_env = TypeEnvStack::new();
-        let global_env = TypeEnvStack::new();
+        let mut local_env = TypeEnvStack::new();
+        let mut global_env = TypeEnvStack::new();
         let expr = Expression::Number(TokenReference::new(
             vec![],
             Token::new(TokenType::Number {
@@ -377,7 +406,7 @@ mod tests {
             vec![],
         ));
         assert_eq!(
-            typecheck_expr(&local_env, &global_env, &expr).unwrap(),
+            typecheck_expr(&mut local_env, &mut global_env, &expr).unwrap(),
             Type::Number
         );
         let expr = Expression::Number(TokenReference::new(
@@ -388,15 +417,15 @@ mod tests {
             vec![],
         ));
         assert_eq!(
-            typecheck_expr(&local_env, &global_env, &expr).unwrap(),
+            typecheck_expr(&mut local_env, &mut global_env, &expr).unwrap(),
             Type::Number
         );
     }
 
     #[test]
     fn test_binaryop() {
-        let local_env = TypeEnvStack::new();
-        let global_env = TypeEnvStack::new();
+        let mut local_env = TypeEnvStack::new();
+        let mut global_env = TypeEnvStack::new();
         // normal-test: Number + Number => Number
         let expr = Expression::BinaryOperator {
             lhs: Box::new(Expression::Number(TokenReference::new(
@@ -422,7 +451,7 @@ mod tests {
             ))),
         };
         assert_eq!(
-            typecheck_expr(&local_env, &global_env, &expr).unwrap(),
+            typecheck_expr(&mut local_env, &mut global_env, &expr).unwrap(),
             Type::Number
         );
 
@@ -451,7 +480,7 @@ mod tests {
             ))),
         };
         assert_eq!(
-            typecheck_expr(&local_env, &global_env, &expr)
+            typecheck_expr(&mut local_env, &mut global_env, &expr)
                 .unwrap_err()
                 .to_string(),
             "Different type, Got left is Number, right is Boolean.".to_string()
@@ -482,7 +511,7 @@ mod tests {
             ))),
         };
         assert_eq!(
-            typecheck_expr(&local_env, &global_env, &expr)
+            typecheck_expr(&mut local_env, &mut global_env, &expr)
                 .unwrap_err()
                 .to_string(),
             "Different type, Got left is Boolean, right is Number.".to_string()
@@ -513,7 +542,7 @@ mod tests {
             ))),
         };
         assert_eq!(
-            typecheck_expr(&local_env, &global_env, &expr)
+            typecheck_expr(&mut local_env, &mut global_env, &expr)
                 .unwrap_err()
                 .to_string(),
             "Expected Arithmetic type. Got Boolean".to_string()
@@ -522,8 +551,8 @@ mod tests {
 
     #[test]
     fn test_unaryop() {
-        let local_env = TypeEnvStack::new();
-        let global_env = TypeEnvStack::new();
+        let mut local_env = TypeEnvStack::new();
+        let mut global_env = TypeEnvStack::new();
         // Minus Operator
         // normal-test: '-' + Number
         let expr = Expression::UnaryOperator {
@@ -543,7 +572,7 @@ mod tests {
             ))),
         };
         assert_eq!(
-            typecheck_expr(&local_env, &global_env, &expr).unwrap(),
+            typecheck_expr(&mut local_env, &mut global_env, &expr).unwrap(),
             Type::Number
         );
         // error-test: '-' + NotNumber
@@ -564,7 +593,7 @@ mod tests {
             ))),
         };
         assert_eq!(
-            typecheck_expr(&local_env, &global_env, &expr)
+            typecheck_expr(&mut local_env, &mut global_env, &expr)
                 .unwrap_err()
                 .to_string(),
             "Expected Number for 'Minus' unary operator".to_string(),
@@ -589,7 +618,7 @@ mod tests {
             ))),
         };
         assert_eq!(
-            typecheck_expr(&local_env, &global_env, &expr).unwrap(),
+            typecheck_expr(&mut local_env, &mut global_env, &expr).unwrap(),
             Type::Boolean
         );
 
@@ -611,7 +640,7 @@ mod tests {
             ))),
         };
         assert_eq!(
-            typecheck_expr(&local_env, &global_env, &expr)
+            typecheck_expr(&mut local_env, &mut global_env, &expr)
                 .unwrap_err()
                 .to_string(),
             "Expected Boolean for 'Not' unary operator".to_string(),
@@ -630,7 +659,7 @@ mod tests {
             expression: Box::new(Expression::TableConstructor(TableConstructor::new())),
         };
         assert_eq!(
-            typecheck_expr(&local_env, &global_env, &expr).unwrap(),
+            typecheck_expr(&mut local_env, &mut global_env, &expr).unwrap(),
             Type::Number
         );
 
@@ -654,7 +683,7 @@ mod tests {
             ))),
         };
         assert_eq!(
-            typecheck_expr(&local_env, &global_env, &expr).unwrap(),
+            typecheck_expr(&mut local_env, &mut global_env, &expr).unwrap(),
             Type::Number,
         );
 
@@ -676,7 +705,7 @@ mod tests {
             ))),
         };
         assert_eq!(
-            typecheck_expr(&local_env, &global_env, &expr)
+            typecheck_expr(&mut local_env, &mut global_env, &expr)
                 .unwrap_err()
                 .to_string(),
             "Expected Table or String for 'Hash' unary operator".to_string(),
@@ -756,6 +785,8 @@ mod tests {
                 })))
             }))
         );
+        assert_eq!(local_env.lookup("x"), None);
+        assert_eq!(local_env.lookup("y"), None);
         assert_eq!(local_env.lookup("a"), None);
         assert_eq!(local_env.lookup("b"), None);
     }
@@ -792,6 +823,46 @@ mod tests {
                 })))
             }))
         );
+        assert_eq!(local_env.lookup("x"), None);
+        assert_eq!(local_env.lookup("y"), None);
+        assert_eq!(local_env.lookup("a"), None);
+        assert_eq!(local_env.lookup("b"), None);
+    }
+    #[test]
+    fn test_local_anonymous_function_assignment() {
+        let mut local_env = TypeEnvStack::new();
+        let mut global_env = TypeEnvStack::new();
+        let ast = full_moon::parse(
+            r#"
+        local minmax = function(x, y)
+            local a = 12
+            local b = 13
+            return x, y
+        end
+        "#,
+        )
+        .unwrap();
+        typecheck_block(&mut local_env, &mut global_env, ast.nodes());
+        assert_eq!(
+            local_env.lookup("minmax"),
+            Some(Type::Function(FunctionType {
+                params: vec![
+                    Param {
+                        symbol: "x".to_string(),
+                        ty: Type::Unknown
+                    },
+                    Param {
+                        symbol: "y".to_string(),
+                        ty: Type::Unknown
+                    }
+                ],
+                ret_ty: Box::new(Some(Type::MultiValue(MultiValueType {
+                    types: vec![Type::Unknown, Type::Unknown]
+                })))
+            }))
+        );
+        assert_eq!(local_env.lookup("x"), None);
+        assert_eq!(local_env.lookup("y"), None);
         assert_eq!(local_env.lookup("a"), None);
         assert_eq!(local_env.lookup("b"), None);
     }
