@@ -32,7 +32,6 @@ $ typua lsp         # execute lsp current project
 $ typua lsp src/    # execute lsp specifed dir
 ```
 
-
 # Configuration
 typua detects `typua.toml` or `.typua.toml` on your project root.
 
