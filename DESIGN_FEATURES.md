@@ -65,7 +65,7 @@ local a: number = x
 local b: string = y
 ```
 
-### Assign Anonimous Function
+### Assign Anonymous Function
 ```lua
 ---@param x number
 ---@param y number
@@ -74,6 +74,20 @@ local f = function(x: number, y: number)
 	return x + y
 end
 local result: number = f(x: 12, y: 34)
+```
+
+### Define Function
+```lua
+---@param x number
+---@param y number
+---@return number
+function max(x: number, y: number)
+    if x < y then
+        return y
+    else
+        return x
+    end
+end
 ```
 
 ### Array Index
