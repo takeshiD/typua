@@ -1,6 +1,6 @@
 # Gradual Typing
 
-## ?(Unknown) Type
+# ?(Unknown) Type
 型アノテーションを省略した場合、型システムはその式を?(Unknown)型と判定する。
 
 - All Unknown
@@ -34,7 +34,7 @@ function func(x, y)
 end
 ```
 
-## Type Consistency
+# 型の一貫性(Type Consistency)
 ## オブジェクト型の記法
 オブジェクト型を表す記法を定義しよう。
 オブジェクト型は以下のように定義する。
@@ -52,13 +52,18 @@ end
 例えば $x = 0$ というメンバ変数は $int \to int$ というメソッドとして解釈される。
 
 
-
-### 制限演算子(Restriction Operator) $\sigma | \tau$
+## 制限演算子(Restriction Operator) $\sigma | \tau$
 $\sigma | \tau$ は制限演算子(Restriction Operator)と呼ばれる。
 
-For examples,
+この演算子は型 $\sigma$ のうち型 $\tau$ で不明な部分(すなわちUnknown型)をマスクする作用がある。
+
+例えば
+
 ```math
-int | ? = ?
+begin{align}
+    int | _{?} = ? & int | _{bool} = int \\
+    \left[ x: int \to int, y: int \to int \right] | _{ \left[ x: ? \to ?, y: int \to int \right] } = \left[ x: ? \to ?, y: int \to int \right]
+end{align}
 ```
 
 # TypeCheck
