@@ -1,7 +1,7 @@
 # Gradual Typing
 
 ## ?(Unknown) Type
-If programmer omits a expression's type annotation, gradual type system will judge it is ?(Unknown) type.
+型アノテーションを省略した場合、型システムはその式を?(Unknown)型と判定する。
 
 - All Unknown
 ```lua
@@ -10,8 +10,8 @@ function func(x, y)
 end
 ```
 
-In this case, when function `func` has 2 params, 1 return value.
-Type System judge each params and return value is `Unknown` type.
+この例では`func`は2つの引数と返り値を持つ。  
+型システムはそれぞれの引数と返り値を`Unknown`型と判定する。  
 
 
 - Partial Unknown
@@ -35,7 +35,6 @@ end
 ```
 
 ## Type Consistency
-
 ## オブジェクト型の記法
 オブジェクト型を表す記法を定義しよう。
 オブジェクト型は以下のように定義する。
@@ -43,11 +42,19 @@ end
 ```math
 \[l_1 : s_1, ..., l_n : s_n \]
 ```
-このとき$l_i$はメソッド、$s_i$は
+
+このとき$l_i$はメソッド、$s_i$は型シグネチャとした
+
+型シグネチャは`\tau \rightarrow \tau^'`という記法で表示される。
+
+本表記ではメンバ変数もメソッドとして取り扱うことに注意せよ。
+
+例えば`x = 0`というメンバ変数は`int \rightarrow int`というメソッドとして解釈される。
+
 
 
 ### 制限演算子(Restriction Operator) $\sigma | \tau$
-$\sigma | _\tau$ is called Restriction Operator.
+$\sigma | \tau$ は制限演算子(Restriction Operator)と呼ばれる。
 
 For examples,
 ```math
