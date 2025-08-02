@@ -61,9 +61,12 @@ $\sigma | \tau$ は制限演算子(Restriction Operator)と呼ばれる。
 
 ```math
 \begin{align*}
-    &int | _{?} = ? & int | _{bool} = int \\
-    &\left[ x: int \to int, y: int \to int \right] | _{ \left[ x: ? \to ?, y: int \to int \right] } = \left[ x: ? \to ?, y: int \to int \right] &
+    &int | _{?} = ? & int | _{bool} = int
 \end{align*}
+```
+
+```math
+\left[ x: int \to int, y: int \to int \right] | _{ \left[ x: ? \to ?, y: int \to int \right] } = \left[ x: ? \to ?, y: int \to int \right]
 ```
 
 # TypeCheck
