@@ -77,11 +77,11 @@ fn error_range(error: &FullMoonError) -> Option<TextRange> {
 }
 
 fn type_check_ast(path: &Path, source: &str, ast: &ast::Ast) -> Vec<Diagnostic> {
-    let annotations = AnnotationIndex::from_source(source);
-    TypeChecker::new(path, annotations).check(ast)
+    let (annotations, type_registry) = AnnotationIndex::from_source(source);
+    TypeChecker::new(path, annotations, type_registry).check(ast)
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 enum TypeKind {
     Unknown,
     Nil,
@@ -90,10 +90,12 @@ enum TypeKind {
     String,
     Table,
     Function,
+    Thread,
+    Custom(String),
 }
 
 impl TypeKind {
-    fn describe(self) -> &'static str {
+    fn describe(&self) -> &'static str {
         match self {
             TypeKind::Unknown => "unknown",
             TypeKind::Nil => "nil",
@@ -102,13 +104,97 @@ impl TypeKind {
             TypeKind::String => "string",
             TypeKind::Table => "table",
             TypeKind::Function => "function",
+            TypeKind::Thread => "thread",
+            TypeKind::Custom(_) => "custom",
         }
     }
 }
 
 impl fmt::Display for TypeKind {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(self.describe())
+        match self {
+            TypeKind::Custom(name) => f.write_str(name),
+            _ => f.write_str(self.describe()),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Default)]
+struct ClassInfo {
+    exact: bool,
+    parent: Option<String>,
+    fields: HashMap<String, AnnotatedType>,
+}
+
+impl ClassInfo {
+    fn new(exact: bool, parent: Option<String>) -> Self {
+        Self {
+            exact,
+            parent,
+            fields: HashMap::new(),
+        }
+    }
+}
+
+#[derive(Default)]
+struct TypeRegistry {
+    classes: HashMap<String, ClassInfo>,
+    enums: HashMap<String, ()>,
+}
+
+impl TypeRegistry {
+    fn register_class(&mut self, decl: ClassDeclaration) {
+        let name = decl.name.clone();
+        let entry = self
+            .classes
+            .entry(name)
+            .or_insert_with(|| ClassInfo::new(decl.exact, decl.parent.clone()));
+        entry.exact = decl.exact;
+        entry.parent = decl.parent;
+    }
+
+    fn register_enum(&mut self, name: &str) {
+        self.enums.insert(name.to_string(), ());
+    }
+
+    fn register_field(&mut self, class: &str, field: &str, ty: AnnotatedType) {
+        let entry = self
+            .classes
+            .entry(class.to_string())
+            .or_insert_with(|| ClassInfo::new(false, None));
+        entry.fields.insert(field.to_string(), ty);
+    }
+
+    fn resolve(&self, name: &str) -> Option<TypeKind> {
+        if self.classes.contains_key(name) {
+            Some(TypeKind::Custom(name.to_string()))
+        } else if self.enums.contains_key(name) {
+            Some(TypeKind::String)
+        } else {
+            None
+        }
+    }
+
+    fn field_annotation(&self, class: &str, field: &str) -> Option<&AnnotatedType> {
+        let mut current = Some(class);
+        while let Some(name) = current {
+            if let Some(info) = self.classes.get(name) {
+                if let Some(annotation) = info.fields.get(field) {
+                    return Some(annotation);
+                }
+                current = info.parent.as_deref();
+            } else {
+                break;
+            }
+        }
+        None
+    }
+
+    fn is_exact(&self, class: &str) -> bool {
+        self.classes
+            .get(class)
+            .map(|info| info.exact)
+            .unwrap_or(false)
     }
 }
 
@@ -120,7 +206,7 @@ struct AnnotatedType {
 
 impl AnnotatedType {
     fn new(raw: String) -> Self {
-        let kind = parse_type_name(&raw);
+        let kind = parse_builtin_type(&raw);
         Self { raw, kind }
     }
 }
@@ -129,6 +215,7 @@ impl AnnotatedType {
 enum AnnotationUsage {
     Type,
     Param,
+    Return,
 }
 
 #[derive(Clone, Debug)]
@@ -144,13 +231,34 @@ struct AnnotationIndex {
 }
 
 impl AnnotationIndex {
-    fn from_source(source: &str) -> Self {
+    fn from_source(source: &str) -> (Self, TypeRegistry) {
         let mut by_line: HashMap<usize, Vec<Annotation>> = HashMap::new();
         let mut pending: Vec<Annotation> = Vec::new();
+        let mut registry = TypeRegistry::default();
+        let mut current_class: Option<String> = None;
 
         for (idx, line) in source.lines().enumerate() {
             let line_no = idx + 1;
             let trimmed = line.trim_start();
+
+            if let Some(decl) = parse_class_declaration(trimmed) {
+                current_class = Some(decl.name.clone());
+                registry.register_class(decl);
+                continue;
+            }
+
+            if let Some(name) = parse_enum_declaration(trimmed) {
+                registry.register_enum(&name);
+                current_class = None;
+                continue;
+            }
+
+            if let Some((field_name, field_ty)) = parse_field_declaration(trimmed) {
+                if let Some(class_name) = current_class.clone() {
+                    registry.register_field(&class_name, &field_name, field_ty);
+                }
+                continue;
+            }
 
             if let Some(annotation) = parse_annotation(trimmed) {
                 pending.push(annotation);
@@ -161,6 +269,8 @@ impl AnnotationIndex {
                 continue;
             }
 
+            current_class = None;
+
             if !pending.is_empty() {
                 by_line
                     .entry(line_no)
@@ -169,7 +279,7 @@ impl AnnotationIndex {
             }
         }
 
-        Self { by_line }
+        (Self { by_line }, registry)
     }
 
     fn take(&mut self, line: usize) -> Vec<Annotation> {
@@ -202,13 +312,40 @@ fn parse_annotation(line: &str) -> Option<Annotation> {
         });
     }
 
+    if let Some(rest) = line.strip_prefix("---@return") {
+        let mut parts = rest.trim().split_whitespace();
+        let type_token = parts.next().unwrap_or("any");
+        let name = parts.next().map(|value| value.to_string());
+        let ty = AnnotatedType::new(type_token.to_string());
+        return Some(Annotation {
+            usage: AnnotationUsage::Return,
+            name,
+            ty,
+        });
+    }
+
     None
 }
 
-fn parse_type_name(raw: &str) -> Option<TypeKind> {
+#[derive(Clone, Debug)]
+struct ClassDeclaration {
+    name: String,
+    exact: bool,
+    parent: Option<String>,
+}
+
+fn parse_builtin_type(raw: &str) -> Option<TypeKind> {
     let normalized = raw.trim();
     if normalized.is_empty() {
         return None;
+    }
+
+    if normalized.starts_with('"')
+        || normalized.starts_with('\'')
+        || normalized.ends_with('"')
+        || normalized.ends_with('\'')
+    {
+        return Some(TypeKind::String);
     }
 
     let mut lower = normalized.to_ascii_lowercase();
@@ -237,9 +374,55 @@ fn parse_type_name(raw: &str) -> Option<TypeKind> {
         "integer" | "int" => Some(TypeKind::Number),
         "table" => Some(TypeKind::Table),
         "function" => Some(TypeKind::Function),
+        "thread" => Some(TypeKind::Thread),
         "any" => None,
         _ => None,
     }
+}
+
+fn parse_class_declaration(line: &str) -> Option<ClassDeclaration> {
+    let rest = line.strip_prefix("---@class")?.trim();
+    let (rest, exact) = if let Some(remaining) = rest.strip_prefix("(exact)") {
+        (remaining.trim(), true)
+    } else {
+        (rest, false)
+    };
+
+    let mut parts = rest.splitn(2, ':');
+    let name_part = parts.next()?.trim();
+    if name_part.is_empty() {
+        return None;
+    }
+
+    let parent = parts
+        .next()
+        .and_then(|value| value.split_whitespace().next())
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+
+    Some(ClassDeclaration {
+        name: name_part.to_string(),
+        exact,
+        parent,
+    })
+}
+
+fn parse_enum_declaration(line: &str) -> Option<String> {
+    let rest = line.strip_prefix("---@enum")?.trim();
+    let name = rest.split_whitespace().next()?;
+    if name.is_empty() {
+        None
+    } else {
+        Some(name.to_string())
+    }
+}
+
+fn parse_field_declaration(line: &str) -> Option<(String, AnnotatedType)> {
+    let rest = line.strip_prefix("---@field")?.trim();
+    let mut parts = rest.split_whitespace();
+    let name = parts.next()?.to_string();
+    let type_part = parts.next().unwrap_or("any");
+    Some((name, AnnotatedType::new(type_part.to_string())))
 }
 
 struct TypeChecker<'a> {
@@ -247,15 +430,19 @@ struct TypeChecker<'a> {
     diagnostics: Vec<Diagnostic>,
     scopes: Vec<HashMap<String, TypeKind>>,
     annotations: AnnotationIndex,
+    type_registry: TypeRegistry,
+    return_expectations: Vec<Vec<AnnotatedType>>,
 }
 
 impl<'a> TypeChecker<'a> {
-    fn new(path: &'a Path, annotations: AnnotationIndex) -> Self {
+    fn new(path: &'a Path, annotations: AnnotationIndex, type_registry: TypeRegistry) -> Self {
         Self {
             path,
             diagnostics: Vec::new(),
             scopes: Vec::new(),
             annotations,
+            type_registry,
+            return_expectations: Vec::new(),
         }
     }
 
@@ -289,22 +476,30 @@ impl<'a> TypeChecker<'a> {
         self.annotations.take(line)
     }
 
-    fn extract_param_annotations(
+    fn extract_function_annotations(
         annotations: &mut Vec<Annotation>,
-    ) -> HashMap<String, AnnotatedType> {
-        let mut map = HashMap::new();
+    ) -> (HashMap<String, AnnotatedType>, Vec<AnnotatedType>) {
+        let mut params = HashMap::new();
+        let mut returns = Vec::new();
         let mut index = 0;
         while index < annotations.len() {
-            if annotations[index].usage == AnnotationUsage::Param {
-                if let Some(name) = annotations[index].name.clone() {
-                    map.insert(name, annotations[index].ty.clone());
+            match annotations[index].usage {
+                AnnotationUsage::Param => {
+                    if let Some(name) = annotations[index].name.clone() {
+                        params.insert(name, annotations[index].ty.clone());
+                    }
+                    annotations.remove(index);
                 }
-                annotations.remove(index);
-            } else {
-                index += 1;
+                AnnotationUsage::Return => {
+                    returns.push(annotations[index].ty.clone());
+                    annotations.remove(index);
+                }
+                _ => {
+                    index += 1;
+                }
             }
         }
-        map
+        (params, returns)
     }
 
     fn apply_type_annotation(
@@ -328,8 +523,15 @@ impl<'a> TypeChecker<'a> {
 
         if let Some(position) = idx {
             let annotation = annotations.remove(position);
-            if let Some(expected) = annotation.ty.kind {
-                if inferred != TypeKind::Unknown && inferred != expected {
+            if let Some(expected) = self.resolve_annotation_kind(&annotation.ty) {
+                let compatible = match &expected {
+                    TypeKind::Custom(_) => {
+                        inferred == TypeKind::Unknown || inferred == TypeKind::Table || inferred == expected
+                    }
+                    _ => inferred == TypeKind::Unknown || inferred == expected,
+                };
+
+                if !compatible {
                     let message = format!(
                         "variable '{name}' is annotated as type {} but inferred type is {}",
                         annotation.ty.raw, inferred
@@ -342,6 +544,14 @@ impl<'a> TypeChecker<'a> {
             }
         } else {
             inferred
+        }
+    }
+
+    fn resolve_annotation_kind(&self, annotation: &AnnotatedType) -> Option<TypeKind> {
+        if let Some(kind) = annotation.kind.clone() {
+            Some(kind)
+        } else {
+            self.type_registry.resolve(&annotation.raw)
         }
     }
 
@@ -365,9 +575,84 @@ impl<'a> TypeChecker<'a> {
 
     fn check_last_stmt(&mut self, last_stmt: &ast::LastStmt) {
         if let ast::LastStmt::Return(ret) = last_stmt {
-            for pair in ret.returns().pairs() {
-                self.infer_expression(pair.value());
+            self.validate_return(ret);
+        }
+    }
+
+    fn validate_return(&mut self, ret: &ast::Return) {
+        let mut expr_info: Vec<(TypeKind, &ast::Expression)> = Vec::new();
+        for pair in ret.returns().pairs() {
+            let ty = self.infer_expression(pair.value());
+            expr_info.push((ty, pair.value()));
+        }
+
+        let Some(expectations) = self.return_expectations.last() else {
+            return;
+        };
+        let expectations = expectations.clone();
+
+        let expected_len = expectations.len();
+        let actual_len = expr_info.len();
+
+        if actual_len > expected_len {
+            let message = format!(
+                "function returns {actual_len} value(s) but only {expected_len} annotated via @return"
+            );
+            self.push_diagnostic(ret.token(), message);
+        }
+
+        if actual_len < expected_len {
+            let message = format!(
+                "function annotated to return {expected_len} value(s) but this return statement provides {actual_len}"
+            );
+            self.push_diagnostic(ret.token(), message);
+        }
+
+        for (idx, annotation) in expectations.iter().enumerate() {
+            if idx >= expr_info.len() {
+                break;
             }
+
+            let actual = expr_info[idx].0.clone();
+            if let Some(expected) = self.resolve_annotation_kind(annotation) {
+                if actual != TypeKind::Unknown && actual != expected {
+                    let message = format!(
+                        "return value #{} is annotated as type {} but inferred type is {}",
+                        idx + 1,
+                        annotation.raw,
+                        actual
+                    );
+                    self.push_diagnostic(ret.token(), message);
+                }
+            }
+        }
+    }
+
+    fn validate_field_assignment(
+        &mut self,
+        class_name: &str,
+        field_token: &TokenReference,
+        value_type: &TypeKind,
+    ) {
+        let Some(field_name) = token_identifier(field_token) else {
+            return;
+        };
+
+        if let Some(annotation) = self.type_registry.field_annotation(class_name, &field_name) {
+            if let Some(expected) = self.resolve_annotation_kind(annotation) {
+                if value_type != &TypeKind::Unknown && value_type != &expected {
+                    let message = format!(
+                        "field '{field_name}' in class {class_name} expects type {} but inferred type is {}",
+                        annotation.raw, value_type
+                    );
+                    self.push_diagnostic(field_token, message);
+                }
+            }
+        } else if self.type_registry.is_exact(class_name) {
+            let message = format!(
+                "class {class_name} is declared exact; field '{field_name}' is not defined"
+            );
+            self.push_diagnostic(field_token, message);
         }
     }
 
@@ -384,7 +669,7 @@ impl<'a> TypeChecker<'a> {
         for (index, pair) in assignment.names().pairs().enumerate() {
             let token = pair.value();
             if let Some(name) = token_identifier(token) {
-                let inferred = expr_types.get(index).copied().unwrap_or(TypeKind::Nil);
+                let inferred = expr_types.get(index).cloned().unwrap_or(TypeKind::Nil);
                 let ty = self.apply_type_annotation(&name, token, inferred, &mut annotations);
                 self.assign_local(&name, token, ty);
             }
@@ -414,9 +699,17 @@ impl<'a> TypeChecker<'a> {
         for (index, pair) in assignment.variables().pairs().enumerate() {
             if let ast::Var::Name(token) = pair.value() {
                 if let Some(name) = token_identifier(token) {
-                    let inferred = expr_types.get(index).copied().unwrap_or(TypeKind::Nil);
+                    let inferred = expr_types.get(index).cloned().unwrap_or(TypeKind::Nil);
                     let ty = self.apply_type_annotation(&name, token, inferred, &mut annotations);
                     self.assign_nonlocal(&name, token, ty);
+                }
+            } else if let Some((base_token, field_token)) = extract_field_assignment(pair.value()) {
+                if let Some(base_name) = token_identifier(base_token) {
+                    if let Some(TypeKind::Custom(class_name)) = self.lookup(&base_name) {
+                        let value_type =
+                            expr_types.get(index).cloned().unwrap_or(TypeKind::Unknown);
+                        self.validate_field_assignment(&class_name, field_token, &value_type);
+                    }
                 }
             }
         }
@@ -425,7 +718,8 @@ impl<'a> TypeChecker<'a> {
     fn check_local_function(&mut self, local_fn: &ast::LocalFunction) {
         let line = local_fn.local_token().token().start_position().line();
         let mut annotations = self.take_line_annotations(line);
-        let mut param_annotations = TypeChecker::extract_param_annotations(&mut annotations);
+        let (mut param_annotations, return_annotations) =
+            TypeChecker::extract_function_annotations(&mut annotations);
 
         if let Some(name) = token_identifier(local_fn.name()) {
             let inferred = TypeKind::Function;
@@ -433,16 +727,24 @@ impl<'a> TypeChecker<'a> {
             self.assign_local(&name, local_fn.name(), ty);
         }
 
+        let enforce_returns = !return_annotations.is_empty();
+        if enforce_returns {
+            self.return_expectations.push(return_annotations);
+        }
         self.with_new_scope(|checker| {
             checker.bind_function_parameters(local_fn.body(), &mut param_annotations);
             checker.check_block(local_fn.body().block());
         });
+        if enforce_returns {
+            self.return_expectations.pop();
+        }
     }
 
     fn check_function_declaration(&mut self, function: &ast::FunctionDeclaration) {
         let line = function.function_token().token().start_position().line();
         let mut annotations = self.take_line_annotations(line);
-        let mut param_annotations = TypeChecker::extract_param_annotations(&mut annotations);
+        let (mut param_annotations, return_annotations) =
+            TypeChecker::extract_function_annotations(&mut annotations);
 
         if let Some(token) = target_function_name(function.name()) {
             if let Some(name) = token_identifier(token) {
@@ -452,10 +754,17 @@ impl<'a> TypeChecker<'a> {
             }
         }
 
+        let enforce_returns = !return_annotations.is_empty();
+        if enforce_returns {
+            self.return_expectations.push(return_annotations);
+        }
         self.with_new_scope(|checker| {
             checker.bind_function_parameters(function.body(), &mut param_annotations);
             checker.check_block(function.body().block());
         });
+        if enforce_returns {
+            self.return_expectations.pop();
+        }
     }
 
     fn check_if(&mut self, if_stmt: &ast::If) {
@@ -524,7 +833,7 @@ impl<'a> TypeChecker<'a> {
                 if let Some(name) = token_identifier(token) {
                     let mut ty = TypeKind::Unknown;
                     if let Some(annotation) = param_annotations.remove(&name) {
-                        if let Some(expected) = annotation.kind {
+                        if let Some(expected) = self.resolve_annotation_kind(&annotation) {
                             ty = expected;
                         }
                     }
@@ -535,14 +844,14 @@ impl<'a> TypeChecker<'a> {
     }
 
     fn assign_local(&mut self, name: &str, token: &TokenReference, ty: TypeKind) {
-        self.emit_reassignment(name, token, ty);
+        self.emit_reassignment(name, token, &ty);
         if let Some(scope) = self.scopes.last_mut() {
             scope.insert(name.to_owned(), ty);
         }
     }
 
     fn assign_nonlocal(&mut self, name: &str, token: &TokenReference, ty: TypeKind) {
-        self.emit_reassignment(name, token, ty);
+        self.emit_reassignment(name, token, &ty);
 
         if let Some(index) = self.lookup_scope_index(name) {
             if let Some(scope) = self.scopes.get_mut(index) {
@@ -556,13 +865,13 @@ impl<'a> TypeChecker<'a> {
         }
     }
 
-    fn emit_reassignment(&mut self, name: &str, token: &TokenReference, ty: TypeKind) {
-        if ty == TypeKind::Unknown {
+    fn emit_reassignment(&mut self, name: &str, token: &TokenReference, ty: &TypeKind) {
+        if ty == &TypeKind::Unknown {
             return;
         }
 
         if let Some(existing) = self.lookup(name) {
-            if existing != TypeKind::Unknown && existing != ty {
+            if existing != TypeKind::Unknown && existing != *ty {
                 let message = format!(
                     "variable '{name}' was previously inferred as type {existing} but is now assigned type {ty}"
                 );
@@ -573,8 +882,8 @@ impl<'a> TypeChecker<'a> {
 
     fn lookup(&self, name: &str) -> Option<TypeKind> {
         for scope in self.scopes.iter().rev() {
-            if let Some(&ty) = scope.get(name) {
-                return Some(ty);
+            if let Some(ty) = scope.get(name) {
+                return Some(ty.clone());
             }
         }
         None
@@ -755,6 +1064,21 @@ fn target_function_name(name: &ast::FunctionName) -> Option<&TokenReference> {
     Some(first.value())
 }
 
+fn extract_field_assignment(var: &ast::Var) -> Option<(&TokenReference, &TokenReference)> {
+    if let ast::Var::Expression(expression) = var {
+        if let ast::Prefix::Name(base) = expression.prefix() {
+            for suffix in expression.suffixes() {
+                if let ast::Suffix::Index(ast::Index::Dot { name, .. }) = suffix {
+                    return Some((base, name));
+                } else {
+                    return None;
+                }
+            }
+        }
+    }
+    None
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -763,7 +1087,7 @@ mod tests {
 
     fn run_type_check(source: &str) -> Vec<Diagnostic> {
         let ast = full_moon::parse(source).expect("failed to parse test source");
-        TypeChecker::new(Path::new("test.lua"), AnnotationIndex::from_source(source)).check(&ast)
+        type_check_ast(Path::new("test.lua"), source, &ast)
     }
 
     #[test]
@@ -813,7 +1137,7 @@ mod tests {
             "#,
         );
 
-        assert!(diagnostics.is_empty());
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
     }
 
     #[test]
@@ -825,7 +1149,7 @@ mod tests {
             "#,
         );
 
-        assert_eq!(diagnostics.len(), 1);
+        assert_eq!(diagnostics.len(), 1, "{diagnostics:?}");
         let diagnostic = &diagnostics[0];
         assert!(diagnostic.message.contains("annotated as type string"));
     }
@@ -862,5 +1186,139 @@ mod tests {
                 .message
                 .contains("variable 'amount' was previously inferred as type number")
         );
+    }
+
+    #[test]
+    fn class_field_annotations_cover_builtin_types() {
+        let diagnostics = run_type_check(
+            r#"
+            ---@class Data
+            ---@field nothing nil
+            ---@field anything any
+            ---@field flag boolean
+            ---@field name string
+            ---@field size integer
+            ---@field callback function
+            ---@field bucket table
+            ---@field co thread
+
+            ---@type Data
+            local data = {}
+            data.nothing = nil
+            data.anything = 1
+            data.flag = true
+            data.name = "alice"
+            data.size = 1
+            data.callback = function() end
+            data.bucket = {}
+            data.co = coroutine.create(function() end)
+            "#,
+        );
+
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+    }
+
+    #[test]
+    fn exact_class_rejects_unknown_fields() {
+        let diagnostics = run_type_check(
+            r#"
+            ---@class (exact) Point
+            ---@field x number
+            ---@field y number
+
+            ---@type Point
+            local Point = {}
+            Point.x = 1
+            Point.y = 2
+            Point.z = 3
+            "#,
+        );
+
+        assert_eq!(diagnostics.len(), 1);
+        let diagnostic = &diagnostics[0];
+        assert!(diagnostic.message.contains("Point"));
+        assert!(diagnostic.message.contains("field 'z'"));
+    }
+
+    #[test]
+    fn class_inheritance_allows_parent_fields() {
+        let diagnostics = run_type_check(
+            r#"
+            ---@class Vehicle
+            ---@field speed number
+            local Vehicle = {}
+
+            ---@class Plane: Vehicle
+            ---@field altitude number
+
+            ---@type Plane
+            local plane = {}
+            plane.speed = 100
+            plane.altitude = 1000
+            "#,
+        );
+
+        assert!(diagnostics.is_empty());
+    }
+
+    #[test]
+    fn return_annotation_detects_mismatch() {
+        let diagnostics = run_type_check(
+            r#"
+            ---@return number
+            local function value()
+                return "oops"
+            end
+            "#,
+        );
+
+        assert_eq!(diagnostics.len(), 1);
+        let diagnostic = &diagnostics[0];
+        assert!(diagnostic.message.contains("return value #1"));
+    }
+
+    #[test]
+    fn return_annotation_accepts_correct_type() {
+        let diagnostics = run_type_check(
+            r#"
+            ---@return number
+            local function value()
+                return 42
+            end
+            "#,
+        );
+
+        assert!(diagnostics.is_empty());
+    }
+
+    #[test]
+    fn class_annotation_maps_to_table() {
+        let diagnostics = run_type_check(
+            r#"
+            ---@class Person
+            ---@type Person
+            local person = {}
+            "#,
+        );
+
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+    }
+
+    #[test]
+    fn enum_annotation_treated_as_string() {
+        let diagnostics = run_type_check(
+            r#"
+            ---@enum Mode
+            ---@field Immediate '"immediate"'
+            ---@field Deferred '"deferred"'
+
+            ---@param mode Mode
+            local function set_mode(mode)
+                mode = "immediate"
+            end
+            "#,
+        );
+
+        assert!(diagnostics.is_empty());
     }
 }
