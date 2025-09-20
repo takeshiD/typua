@@ -54,14 +54,7 @@ impl Default for RuntimeConfig {
     fn default() -> Self {
         Self {
             version: RuntimeVersion::Luajit,
-            include: vec![
-                "*.lua".to_string(),
-                "**/init.lua".to_string(),
-                "~/.luarocks/share/lua/5.3/*.lua".to_string(),
-                "$HOME/.luarocks/share/lua/5.3/*.lua".to_string(),
-                "/usr/share/5.3/*.lua".to_string(),
-                "/usr/share/lua/5.3/*/init.lua".to_string(),
-            ],
+            include: Vec::new(),
         }
     }
 }
