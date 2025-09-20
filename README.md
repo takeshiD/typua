@@ -55,6 +55,31 @@ require("lspconfig").typua.setup({
 }
 ```
 
+# Using with `lua-ls`
+`typua` can be used in combination with `lua-ls`
+
+for example nvim-lspconfig, disable `lua-ls` type-check, but leave the other diagnostics enabled.
+```lua
+return {
+	cmd = { "lua-language-server" },
+	filetypes = { "lua" },
+	settings = {
+		Lua = {
+            diagnostics = { -- use with typua
+                enable = true,
+                disable = { -- disable typecheck
+                    "assign-type-mismatch",
+                    "param-type-mismatch",
+                    "return-type-mismatch",
+                    "undefined-field",
+                }
+            }
+		},
+	},
+}
+```
+
+
 # Using `typua` in CI/CD(⚠  Planned)
 not yet setup
 
