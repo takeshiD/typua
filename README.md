@@ -1,7 +1,6 @@
-<h1 align="center">Typua</h1>a
-<p align="center"><code>npm i -g @takeshid/typua</code><br />or <code>cargo install typua</code></p>
+<h1 align="center">Typua</h1>
 
-A lua typechecker for Lua5.1, 5.2, 5.3, 5.4, LuaJIT.
+`typua` is a lua typechecker for Lua5.1, 5.2, 5.3, 5.4, LuaJIT.
 
 `typua` type-annotation syntax is compatibled [lua-language-server](https://github.com/luals/lua-language-server).
 
@@ -14,22 +13,22 @@ A lua typechecker for Lua5.1, 5.2, 5.3, 5.4, LuaJIT.
 
 # Install
 
-## use `npm`(⚠  Planned)
+## `npm`(⚠  Planned)
 ```bash
 npm install -g @takeshid/typua
 ```
 
-## use `uv`(⚠  Planned)
+## `uv`(⚠  Planned)
 ```bash
 uv tool install typua
 ```
 
-## use `nix`(⚠  Planned)
+## `nix`(⚠  Planned)
 ```bash
 nix-env --install typua
 ```
 
-## use `cargo`
+## `cargo`
 ```bash
 cargo install typua
 ```
@@ -56,18 +55,18 @@ require("lspconfig").typua.setup({
 }
 ```
 
-# Using in CI/CD(⚠  Planned)
+# Using `typua` in CI/CD(⚠  Planned)
 not yet setup
 
 
-# Using as pre-commit hook(⚠  Planned)
+# Using `typua` as pre-commit hook(⚠  Planned)
 not yet setup
 
 
 # Configure
 `typua`  detects `.typua.toml` in workingspace root.
 
-on the other hand, use `--config/-c` option like `typua --config / -c your_typua.toml`.
+on the other hand, use `--config/-c` option like `typua --config your_typua.toml`.
 
 ```toml
 [runtime]
