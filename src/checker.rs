@@ -272,10 +272,7 @@ impl AnnotationIndex {
             current_class = None;
 
             if !pending.is_empty() {
-                by_line
-                    .entry(line_no)
-                    .or_default()
-                    .extend(pending.drain(..));
+                by_line.entry(line_no).or_default().append(&mut pending);
             }
         }
 
@@ -289,7 +286,7 @@ impl AnnotationIndex {
 
 fn parse_annotation(line: &str) -> Option<Annotation> {
     if let Some(rest) = line.strip_prefix("---@type") {
-        let mut parts = rest.trim().split_whitespace();
+        let mut parts = rest.split_whitespace();
         let type_token = parts.next()?;
         let name = parts.next().map(|value| value.to_string());
         let ty = AnnotatedType::new(type_token.to_string());
@@ -301,7 +298,7 @@ fn parse_annotation(line: &str) -> Option<Annotation> {
     }
 
     if let Some(rest) = line.strip_prefix("---@param") {
-        let mut parts = rest.trim().split_whitespace();
+        let mut parts = rest.split_whitespace();
         let name = parts.next()?.to_string();
         let type_token = parts.next().unwrap_or("any");
         let ty = AnnotatedType::new(type_token.to_string());
@@ -313,7 +310,7 @@ fn parse_annotation(line: &str) -> Option<Annotation> {
     }
 
     if let Some(rest) = line.strip_prefix("---@return") {
-        let mut parts = rest.trim().split_whitespace();
+        let mut parts = rest.split_whitespace();
         let type_token = parts.next().unwrap_or("any");
         let name = parts.next().map(|value| value.to_string());
         let ty = AnnotatedType::new(type_token.to_string());
@@ -526,7 +523,9 @@ impl<'a> TypeChecker<'a> {
             if let Some(expected) = self.resolve_annotation_kind(&annotation.ty) {
                 let compatible = match &expected {
                     TypeKind::Custom(_) => {
-                        inferred == TypeKind::Unknown || inferred == TypeKind::Table || inferred == expected
+                        inferred == TypeKind::Unknown
+                            || inferred == TypeKind::Table
+                            || inferred == expected
                     }
                     _ => inferred == TypeKind::Unknown || inferred == expected,
                 };
@@ -614,16 +613,17 @@ impl<'a> TypeChecker<'a> {
             }
 
             let actual = expr_info[idx].0.clone();
-            if let Some(expected) = self.resolve_annotation_kind(annotation) {
-                if actual != TypeKind::Unknown && actual != expected {
-                    let message = format!(
-                        "return value #{} is annotated as type {} but inferred type is {}",
-                        idx + 1,
-                        annotation.raw,
-                        actual
-                    );
-                    self.push_diagnostic(ret.token(), message);
-                }
+            if let Some(expected) = self.resolve_annotation_kind(annotation)
+                && actual != TypeKind::Unknown
+                && actual != expected
+            {
+                let message = format!(
+                    "return value #{} is annotated as type {} but inferred type is {}",
+                    idx + 1,
+                    annotation.raw,
+                    actual
+                );
+                self.push_diagnostic(ret.token(), message);
             }
         }
     }
@@ -639,14 +639,15 @@ impl<'a> TypeChecker<'a> {
         };
 
         if let Some(annotation) = self.type_registry.field_annotation(class_name, &field_name) {
-            if let Some(expected) = self.resolve_annotation_kind(annotation) {
-                if value_type != &TypeKind::Unknown && value_type != &expected {
-                    let message = format!(
-                        "field '{field_name}' in class {class_name} expects type {} but inferred type is {}",
-                        annotation.raw, value_type
-                    );
-                    self.push_diagnostic(field_token, message);
-                }
+            if let Some(expected) = self.resolve_annotation_kind(annotation)
+                && value_type != &TypeKind::Unknown
+                && value_type != &expected
+            {
+                let message = format!(
+                    "field '{field_name}' in class {class_name} expects type {} but inferred type is {}",
+                    annotation.raw, value_type
+                );
+                self.push_diagnostic(field_token, message);
             }
         } else if self.type_registry.is_exact(class_name) {
             let message = format!(
@@ -703,14 +704,12 @@ impl<'a> TypeChecker<'a> {
                     let ty = self.apply_type_annotation(&name, token, inferred, &mut annotations);
                     self.assign_nonlocal(&name, token, ty);
                 }
-            } else if let Some((base_token, field_token)) = extract_field_assignment(pair.value()) {
-                if let Some(base_name) = token_identifier(base_token) {
-                    if let Some(TypeKind::Custom(class_name)) = self.lookup(&base_name) {
-                        let value_type =
-                            expr_types.get(index).cloned().unwrap_or(TypeKind::Unknown);
-                        self.validate_field_assignment(&class_name, field_token, &value_type);
-                    }
-                }
+            } else if let Some((base_token, field_token)) = extract_field_assignment(pair.value())
+                && let Some(base_name) = token_identifier(base_token)
+                && let Some(TypeKind::Custom(class_name)) = self.lookup(&base_name)
+            {
+                let value_type = expr_types.get(index).cloned().unwrap_or(TypeKind::Unknown);
+                self.validate_field_assignment(&class_name, field_token, &value_type);
             }
         }
     }
@@ -746,12 +745,12 @@ impl<'a> TypeChecker<'a> {
         let (mut param_annotations, return_annotations) =
             TypeChecker::extract_function_annotations(&mut annotations);
 
-        if let Some(token) = target_function_name(function.name()) {
-            if let Some(name) = token_identifier(token) {
-                let inferred = TypeKind::Function;
-                let ty = self.apply_type_annotation(&name, token, inferred, &mut annotations);
-                self.assign_nonlocal(&name, token, ty);
-            }
+        if let Some(token) = target_function_name(function.name())
+            && let Some(name) = token_identifier(token)
+        {
+            let inferred = TypeKind::Function;
+            let ty = self.apply_type_annotation(&name, token, inferred, &mut annotations);
+            self.assign_nonlocal(&name, token, ty);
         }
 
         let enforce_returns = !return_annotations.is_empty();
@@ -829,16 +828,16 @@ impl<'a> TypeChecker<'a> {
         param_annotations: &mut HashMap<String, AnnotatedType>,
     ) {
         for pair in body.parameters().pairs() {
-            if let ast::Parameter::Name(token) = pair.value() {
-                if let Some(name) = token_identifier(token) {
-                    let mut ty = TypeKind::Unknown;
-                    if let Some(annotation) = param_annotations.remove(&name) {
-                        if let Some(expected) = self.resolve_annotation_kind(&annotation) {
-                            ty = expected;
-                        }
-                    }
-                    self.assign_local(&name, token, ty);
+            if let ast::Parameter::Name(token) = pair.value()
+                && let Some(name) = token_identifier(token)
+            {
+                let mut ty = TypeKind::Unknown;
+                if let Some(annotation) = param_annotations.remove(&name)
+                    && let Some(expected) = self.resolve_annotation_kind(&annotation)
+                {
+                    ty = expected;
                 }
+                self.assign_local(&name, token, ty);
             }
         }
     }
@@ -853,11 +852,11 @@ impl<'a> TypeChecker<'a> {
     fn assign_nonlocal(&mut self, name: &str, token: &TokenReference, ty: TypeKind) {
         self.emit_reassignment(name, token, &ty);
 
-        if let Some(index) = self.lookup_scope_index(name) {
-            if let Some(scope) = self.scopes.get_mut(index) {
-                scope.insert(name.to_owned(), ty);
-                return;
-            }
+        if let Some(index) = self.lookup_scope_index(name)
+            && let Some(scope) = self.scopes.get_mut(index)
+        {
+            scope.insert(name.to_owned(), ty);
+            return;
         }
 
         if let Some(global) = self.scopes.first_mut() {
@@ -870,13 +869,14 @@ impl<'a> TypeChecker<'a> {
             return;
         }
 
-        if let Some(existing) = self.lookup(name) {
-            if existing != TypeKind::Unknown && existing != *ty {
-                let message = format!(
-                    "variable '{name}' was previously inferred as type {existing} but is now assigned type {ty}"
-                );
-                self.push_diagnostic(token, message);
-            }
+        if let Some(existing) = self.lookup(name)
+            && existing != TypeKind::Unknown
+            && existing != *ty
+        {
+            let message = format!(
+                "variable '{name}' was previously inferred as type {existing} but is now assigned type {ty}"
+            );
+            self.push_diagnostic(token, message);
         }
     }
 
@@ -1065,16 +1065,11 @@ fn target_function_name(name: &ast::FunctionName) -> Option<&TokenReference> {
 }
 
 fn extract_field_assignment(var: &ast::Var) -> Option<(&TokenReference, &TokenReference)> {
-    if let ast::Var::Expression(expression) = var {
-        if let ast::Prefix::Name(base) = expression.prefix() {
-            for suffix in expression.suffixes() {
-                if let ast::Suffix::Index(ast::Index::Dot { name, .. }) = suffix {
-                    return Some((base, name));
-                } else {
-                    return None;
-                }
-            }
-        }
+    if let ast::Var::Expression(expression) = var
+        && let ast::Prefix::Name(base) = expression.prefix()
+        && let Some(ast::Suffix::Index(ast::Index::Dot { name, .. })) = expression.suffixes().next()
+    {
+        return Some((base, name));
     }
     None
 }
