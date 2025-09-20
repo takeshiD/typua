@@ -1,4 +1,8 @@
-use std::{collections::HashMap, path::PathBuf, sync::Arc};
+use std::{
+    collections::HashMap,
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 
 use full_moon::Error as FullMoonError;
 use tokio::sync::RwLock;
@@ -11,7 +15,9 @@ use tower_lsp::lsp_types::{
 };
 use tower_lsp::{Client, LanguageServer, LspService, Server, async_trait};
 
+use crate::checker;
 use crate::cli::LspOptions;
+use crate::diagnostics::{Diagnostic as CheckerDiagnostic, Severity, TextRange};
 use crate::error::Result;
 
 #[derive(Debug)]
@@ -34,7 +40,13 @@ impl TypuaLanguageServer {
 
     async fn publish_diagnostics(&self, uri: Url, text: &str) {
         let diagnostics = match full_moon::parse(text) {
-            Ok(_) => Vec::new(),
+            Ok(ast) => {
+                let path = uri_to_path(&uri);
+                checker::check_ast(&path, text, &ast)
+                    .into_iter()
+                    .map(convert_checker_diagnostic)
+                    .collect()
+            }
             Err(errors) => errors.into_iter().map(convert_error).collect(),
         };
 
@@ -151,10 +163,70 @@ fn convert_error(error: FullMoonError) -> LspDiagnostic {
     }
 }
 
+fn convert_checker_diagnostic(diagnostic: CheckerDiagnostic) -> LspDiagnostic {
+    let severity = match diagnostic.severity {
+        Severity::Error => Some(DiagnosticSeverity::ERROR),
+        Severity::Warning => Some(DiagnosticSeverity::WARNING),
+        Severity::Information => Some(DiagnosticSeverity::INFORMATION),
+        Severity::Hint => Some(DiagnosticSeverity::HINT),
+    };
+
+    let range = diagnostic
+        .range
+        .map(lsp_range_from_text)
+        .unwrap_or_else(default_range);
+
+    LspDiagnostic {
+        range,
+        severity,
+        code: None,
+        code_description: None,
+        source: Some("typua".to_string()),
+        message: diagnostic.message,
+        related_information: None,
+        tags: None,
+        data: None,
+    }
+}
+
 fn lsp_position(position: full_moon::tokenizer::Position) -> Position {
     Position {
         line: position.line().saturating_sub(1) as u32,
         character: position.character().saturating_sub(1) as u32,
+    }
+}
+
+fn lsp_range_from_text(range: TextRange) -> Range {
+    Range {
+        start: Position {
+            line: range.start.line.saturating_sub(1) as u32,
+            character: range.start.character.saturating_sub(1) as u32,
+        },
+        end: Position {
+            line: range.end.line.saturating_sub(1) as u32,
+            character: range.end.character.saturating_sub(1) as u32,
+        },
+    }
+}
+
+fn default_range() -> Range {
+    Range {
+        start: Position {
+            line: 0,
+            character: 0,
+        },
+        end: Position {
+            line: 0,
+            character: 0,
+        },
+    }
+}
+
+fn uri_to_path(uri: &Url) -> PathBuf {
+    if let Ok(path) = uri.to_file_path() {
+        path
+    } else {
+        Path::new(uri.path()).to_path_buf()
     }
 }
 

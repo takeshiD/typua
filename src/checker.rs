@@ -43,7 +43,7 @@ pub fn run(options: &CheckOptions) -> Result<CheckReport> {
         let source = read_source(path)?;
         match full_moon::parse(&source) {
             Ok(ast) => {
-                let mut diagnostics = type_check_ast(path, &source, &ast);
+                let mut diagnostics = check_ast(path, &source, &ast);
                 report.diagnostics.append(&mut diagnostics);
             }
             Err(errors) => {
@@ -76,7 +76,7 @@ fn error_range(error: &FullMoonError) -> Option<TextRange> {
     Some(TextRange { start, end })
 }
 
-fn type_check_ast(path: &Path, source: &str, ast: &ast::Ast) -> Vec<Diagnostic> {
+pub fn check_ast(path: &Path, source: &str, ast: &ast::Ast) -> Vec<Diagnostic> {
     let (annotations, type_registry) = AnnotationIndex::from_source(source);
     TypeChecker::new(path, annotations, type_registry).check(ast)
 }
@@ -1082,7 +1082,7 @@ mod tests {
 
     fn run_type_check(source: &str) -> Vec<Diagnostic> {
         let ast = full_moon::parse(source).expect("failed to parse test source");
-        type_check_ast(Path::new("test.lua"), source, &ast)
+        check_ast(Path::new("test.lua"), source, &ast)
     }
 
     #[test]
