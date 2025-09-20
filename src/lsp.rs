@@ -6,15 +6,14 @@ use std::{
 
 use full_moon::Error as FullMoonError;
 use tokio::sync::RwLock;
-use tower_lsp::{jsonrpc::Result as LspResult, lsp_types::HoverProviderCapability};
 use tower_lsp::lsp_types::{
-    Diagnostic as LspDiagnostic, DiagnosticOptions, DiagnosticServerCapabilities,
-    DiagnosticSeverity, Hover, HoverContents, HoverParams, InitializeParams, InitializeResult,
-    InitializedParams, MarkupContent, MarkupKind, MessageType, Position, Range, ServerCapabilities,
-    TextDocumentContentChangeEvent, TextDocumentSyncCapability, TextDocumentSyncKind,
-    TextDocumentSyncOptions, Url, WorkDoneProgressOptions,
+    Diagnostic as LspDiagnostic, DiagnosticSeverity, Hover, HoverContents, HoverParams,
+    InitializeParams, InitializeResult, InitializedParams, MarkupContent, MarkupKind, MessageType,
+    Position, Range, ServerCapabilities, TextDocumentContentChangeEvent,
+    TextDocumentSyncCapability, TextDocumentSyncKind, TextDocumentSyncOptions, Url,
 };
 use tower_lsp::{Client, LanguageServer, LspService, Server, async_trait};
+use tower_lsp::{jsonrpc::Result as LspResult, lsp_types::HoverProviderCapability};
 
 use crate::checker;
 use crate::cli::LspOptions;
