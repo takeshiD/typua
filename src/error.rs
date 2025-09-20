@@ -57,4 +57,9 @@ pub enum TypuaError {
     },
     #[error("type checking failed with {diagnostics} diagnostic(s)")]
     TypeCheckFailed { diagnostics: usize },
+    #[error("failed to start tokio runtime: {source}")]
+    Runtime {
+        #[source]
+        source: std::io::Error,
+    },
 }

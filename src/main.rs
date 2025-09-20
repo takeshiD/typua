@@ -3,6 +3,7 @@ use std::process;
 use typua::{
     Result, TypuaError, checker,
     cli::{self, CheckOptions, Command, LspOptions},
+    lsp,
 };
 
 fn main() {
@@ -36,7 +37,11 @@ fn handle_check(options: CheckOptions) -> Result<()> {
     })
 }
 
-fn handle_lsp(_options: LspOptions) -> Result<()> {
-    // TODO: Wire up the LSP server implementation
-    Ok(())
+fn handle_lsp(options: LspOptions) -> Result<()> {
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .map_err(|source| TypuaError::Runtime { source })?;
+
+    runtime.block_on(lsp::run(options))
 }

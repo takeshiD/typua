@@ -13,13 +13,13 @@ pub enum Command {
     Lsp(LspOptions),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct CheckOptions {
     pub target: PathBuf,
     pub config: Config,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct LspOptions {
     pub root: PathBuf,
     pub config: Config,
