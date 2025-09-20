@@ -350,9 +350,20 @@ fn lookup_type_at(
 ) -> Option<TypeInfo> {
     types
         .iter()
-        .filter(|((ty_line, ty_char), _)| *ty_line == line && *ty_char <= character)
-        .max_by_key(|((_, ty_char), _)| *ty_char)
-        .map(|(_, ty)| ty.clone())
+        .filter(|((start_line, start_char), info)| {
+            if line < *start_line || line > info.end_line {
+                return false;
+            }
+            if line == *start_line && character < *start_char {
+                return false;
+            }
+            if line == info.end_line && character > info.end_character {
+                return false;
+            }
+            true
+        })
+        .max_by_key(|((start_line, start_char), _)| (*start_line, *start_char))
+        .map(|(_, info)| info.clone())
 }
 
 fn position_in_range(

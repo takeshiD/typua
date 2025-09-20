@@ -104,6 +104,7 @@ enum TypeKind {
     Function,
     Thread,
     Custom(String),
+    Union(Vec<TypeKind>),
 }
 
 impl TypeKind {
@@ -118,6 +119,31 @@ impl TypeKind {
             TypeKind::Function => "function",
             TypeKind::Thread => "thread",
             TypeKind::Custom(_) => "custom",
+            TypeKind::Union(_) => "union",
+        }
+    }
+
+    fn matches(&self, other: &TypeKind) -> bool {
+        if matches!(self, TypeKind::Unknown) || matches!(other, TypeKind::Unknown) {
+            return true;
+        }
+
+        match self {
+            TypeKind::Union(types) => types.iter().any(|t| t.matches(other)),
+            TypeKind::Custom(_) => match other {
+                TypeKind::Union(types) => types.iter().any(|t| self.matches(t)),
+                TypeKind::Table => true,
+                _ => self == other,
+            },
+            TypeKind::Table => match other {
+                TypeKind::Union(types) => types.iter().any(|t| self.matches(t)),
+                TypeKind::Custom(_) => true,
+                _ => self == other,
+            },
+            _ => match other {
+                TypeKind::Union(types) => types.iter().any(|t| self.matches(t)),
+                _ => self == other,
+            },
         }
     }
 }
@@ -126,6 +152,18 @@ impl fmt::Display for TypeKind {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             TypeKind::Custom(name) => f.write_str(name),
+            TypeKind::Union(types) => {
+                let mut iter = types.iter();
+                if let Some(first) = iter.next() {
+                    write!(f, "{first}")?;
+                    for ty in iter {
+                        write!(f, "|{ty}")?;
+                    }
+                    Ok(())
+                } else {
+                    f.write_str("unknown")
+                }
+            }
             _ => f.write_str(self.describe()),
         }
     }
@@ -218,7 +256,7 @@ struct AnnotatedType {
 
 impl AnnotatedType {
     fn new(raw: String) -> Self {
-        let kind = parse_builtin_type(&raw);
+        let kind = parse_type(&raw);
         Self { raw, kind }
     }
 }
@@ -343,37 +381,34 @@ struct ClassDeclaration {
     parent: Option<String>,
 }
 
-fn parse_builtin_type(raw: &str) -> Option<TypeKind> {
-    let normalized = raw.trim();
-    if normalized.is_empty() {
+fn parse_type(raw: &str) -> Option<TypeKind> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
         return None;
     }
 
-    if normalized.starts_with('"')
-        || normalized.starts_with('\'')
-        || normalized.ends_with('"')
-        || normalized.ends_with('\'')
-    {
+    if let Some(stripped) = trimmed.strip_suffix('?') {
+        let base_type = parse_type(stripped.trim())?;
+        return Some(make_union(vec![base_type, TypeKind::Nil]));
+    }
+
+    if trimmed.contains('|') {
+        let mut members = Vec::new();
+        for part in trimmed.split('|').map(str::trim).filter(|p| !p.is_empty()) {
+            members.push(parse_type(part)?);
+        }
+        return Some(make_union(members));
+    }
+
+    parse_atomic_type(trimmed)
+}
+
+fn parse_atomic_type(raw: &str) -> Option<TypeKind> {
+    if raw.starts_with('"') || raw.starts_with('\'') {
         return Some(TypeKind::String);
     }
 
-    let mut lower = normalized.to_ascii_lowercase();
-
-    if lower.ends_with('?') {
-        lower.pop();
-    }
-
-    if lower.ends_with("[]") {
-        return Some(TypeKind::Table);
-    }
-
-    if lower.starts_with("table<") || lower == "table" {
-        return Some(TypeKind::Table);
-    }
-
-    if lower.starts_with("fun") || lower == "function" {
-        return Some(TypeKind::Function);
-    }
+    let lower = raw.to_ascii_lowercase();
 
     match lower.as_str() {
         "nil" => Some(TypeKind::Nil),
@@ -385,7 +420,26 @@ fn parse_builtin_type(raw: &str) -> Option<TypeKind> {
         "function" => Some(TypeKind::Function),
         "thread" => Some(TypeKind::Thread),
         "any" => None,
-        _ => None,
+        _ => Some(TypeKind::Custom(raw.to_string())),
+    }
+}
+
+fn make_union(types: Vec<TypeKind>) -> TypeKind {
+    let mut flat: Vec<TypeKind> = Vec::new();
+    for ty in types {
+        match ty {
+            TypeKind::Union(inner) => flat.extend(inner),
+            other => flat.push(other),
+        }
+    }
+
+    flat.sort_by_key(|a| a.to_string());
+    flat.dedup_by(|a, b| a.matches(b));
+
+    if flat.len() == 1 {
+        flat.into_iter().next().unwrap()
+    } else {
+        TypeKind::Union(flat)
     }
 }
 
@@ -538,16 +592,7 @@ impl<'a> TypeChecker<'a> {
         if let Some(position) = idx {
             let annotation = annotations.remove(position);
             if let Some(expected) = self.resolve_annotation_kind(&annotation.ty) {
-                let compatible = match &expected {
-                    TypeKind::Custom(_) => {
-                        inferred == TypeKind::Unknown
-                            || inferred == TypeKind::Table
-                            || inferred == expected
-                    }
-                    _ => inferred == TypeKind::Unknown || inferred == expected,
-                };
-
-                if !compatible {
+                if !expected.matches(&inferred) {
                     let message = format!(
                         "variable '{name}' is annotated as type {} but inferred type is {}",
                         annotation.ty.raw, inferred
@@ -567,11 +612,10 @@ impl<'a> TypeChecker<'a> {
     }
 
     fn resolve_annotation_kind(&self, annotation: &AnnotatedType) -> Option<TypeKind> {
-        if let Some(kind) = annotation.kind.clone() {
-            Some(kind)
-        } else {
-            self.type_registry.resolve(&annotation.raw)
+        if let Some(resolved) = self.type_registry.resolve(&annotation.raw) {
+            return Some(resolved);
         }
+        annotation.kind.clone()
     }
 
     fn check_stmt(&mut self, stmt: &ast::Stmt) {
@@ -634,8 +678,7 @@ impl<'a> TypeChecker<'a> {
 
             let actual = expr_info[idx].0.clone();
             if let Some(expected) = self.resolve_annotation_kind(annotation)
-                && actual != TypeKind::Unknown
-                && actual != expected
+                && !expected.matches(&actual)
             {
                 let message = format!(
                     "return value #{} is annotated as type {} but inferred type is {}",
@@ -660,10 +703,10 @@ impl<'a> TypeChecker<'a> {
 
         if let Some(annotation) = self.type_registry.field_annotation(class_name, &field_name) {
             if let Some(expected) = self.resolve_annotation_kind(annotation) {
-                let annotation_message = annotation.raw.clone();
                 let expected_clone = expected.clone();
+                let annotation_message = annotation.raw.clone();
                 self.record_type(field_token, expected_clone);
-                if value_type != &TypeKind::Unknown && value_type != &expected {
+                if !expected.matches(value_type) {
                     let message = format!(
                         "field '{field_name}' in class {class_name} expects type {} but inferred type is {}",
                         annotation_message, value_type
@@ -898,8 +941,7 @@ impl<'a> TypeChecker<'a> {
         }
 
         if let Some(existing) = self.lookup(name)
-            && existing != TypeKind::Unknown
-            && existing != *ty
+            && !existing.matches(ty)
         {
             let message = format!(
                 "variable '{name}' was previously inferred as type {existing} but is now assigned type {ty}"
@@ -1036,7 +1078,7 @@ impl<'a> TypeChecker<'a> {
         expected: TypeKind,
         side: OperandSide,
     ) {
-        if actual == TypeKind::Unknown || actual == expected {
+        if actual == TypeKind::Unknown || expected.matches(&actual) {
             return;
         }
 
