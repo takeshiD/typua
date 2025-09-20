@@ -43,8 +43,8 @@ pub fn run(options: &CheckOptions) -> Result<CheckReport> {
         let source = read_source(path)?;
         match full_moon::parse(&source) {
             Ok(ast) => {
-                let mut diagnostics = check_ast(path, &source, &ast);
-                report.diagnostics.append(&mut diagnostics);
+                let mut result = check_ast(path, &source, &ast);
+                report.diagnostics.append(&mut result.diagnostics);
             }
             Err(errors) => {
                 for error in errors {
@@ -76,7 +76,12 @@ fn error_range(error: &FullMoonError) -> Option<TextRange> {
     Some(TextRange { start, end })
 }
 
-pub fn check_ast(path: &Path, source: &str, ast: &ast::Ast) -> Vec<Diagnostic> {
+pub struct CheckResult {
+    pub diagnostics: Vec<Diagnostic>,
+    pub type_map: HashMap<(usize, usize), String>,
+}
+
+pub fn check_ast(path: &Path, source: &str, ast: &ast::Ast) -> CheckResult {
     let (annotations, type_registry) = AnnotationIndex::from_source(source);
     TypeChecker::new(path, annotations, type_registry).check(ast)
 }
@@ -429,6 +434,7 @@ struct TypeChecker<'a> {
     annotations: AnnotationIndex,
     type_registry: TypeRegistry,
     return_expectations: Vec<Vec<AnnotatedType>>,
+    type_info: HashMap<(usize, usize), String>,
 }
 
 impl<'a> TypeChecker<'a> {
@@ -440,14 +446,18 @@ impl<'a> TypeChecker<'a> {
             annotations,
             type_registry,
             return_expectations: Vec::new(),
+            type_info: HashMap::new(),
         }
     }
 
-    fn check(mut self, ast: &ast::Ast) -> Vec<Diagnostic> {
+    fn check(mut self, ast: &ast::Ast) -> CheckResult {
         self.scopes.push(HashMap::new());
         self.check_block(ast.nodes());
         self.scopes.pop();
-        self.diagnostics
+        CheckResult {
+            diagnostics: self.diagnostics,
+            type_map: self.type_info,
+        }
     }
 
     fn check_block(&mut self, block: &ast::Block) {
@@ -537,11 +547,14 @@ impl<'a> TypeChecker<'a> {
                     );
                     self.push_diagnostic(token, message);
                 }
+                self.record_type(token, expected.clone());
                 expected
             } else {
+                self.record_type(token, inferred.clone());
                 inferred
             }
         } else {
+            self.record_type(token, inferred.clone());
             inferred
         }
     }
@@ -639,22 +652,28 @@ impl<'a> TypeChecker<'a> {
         };
 
         if let Some(annotation) = self.type_registry.field_annotation(class_name, &field_name) {
-            if let Some(expected) = self.resolve_annotation_kind(annotation)
-                && value_type != &TypeKind::Unknown
-                && value_type != &expected
-            {
-                let message = format!(
-                    "field '{field_name}' in class {class_name} expects type {} but inferred type is {}",
-                    annotation.raw, value_type
-                );
-                self.push_diagnostic(field_token, message);
+            if let Some(expected) = self.resolve_annotation_kind(annotation) {
+                let annotation_message = annotation.raw.clone();
+                let expected_clone = expected.clone();
+                self.record_type(field_token, expected_clone);
+                if value_type != &TypeKind::Unknown && value_type != &expected {
+                    let message = format!(
+                        "field '{field_name}' in class {class_name} expects type {} but inferred type is {}",
+                        annotation_message, value_type
+                    );
+                    self.push_diagnostic(field_token, message);
+                }
+                return;
             }
         } else if self.type_registry.is_exact(class_name) {
             let message = format!(
                 "class {class_name} is declared exact; field '{field_name}' is not defined"
             );
             self.push_diagnostic(field_token, message);
+            return;
         }
+
+        self.record_type(field_token, value_type.clone());
     }
 
     fn check_local_assignment(&mut self, assignment: &ast::LocalAssignment) {
@@ -844,6 +863,7 @@ impl<'a> TypeChecker<'a> {
 
     fn assign_local(&mut self, name: &str, token: &TokenReference, ty: TypeKind) {
         self.emit_reassignment(name, token, &ty);
+        self.record_type(token, ty.clone());
         if let Some(scope) = self.scopes.last_mut() {
             scope.insert(name.to_owned(), ty);
         }
@@ -851,6 +871,7 @@ impl<'a> TypeChecker<'a> {
 
     fn assign_nonlocal(&mut self, name: &str, token: &TokenReference, ty: TypeKind) {
         self.emit_reassignment(name, token, &ty);
+        self.record_type(token, ty.clone());
 
         if let Some(index) = self.lookup_scope_index(name)
             && let Some(scope) = self.scopes.get_mut(index)
@@ -878,6 +899,12 @@ impl<'a> TypeChecker<'a> {
             );
             self.push_diagnostic(token, message);
         }
+    }
+
+    fn record_type(&mut self, token: &TokenReference, ty: TypeKind) {
+        let position = token.token().start_position();
+        self.type_info
+            .insert((position.line(), position.character()), ty.to_string());
     }
 
     fn lookup(&self, name: &str) -> Option<TypeKind> {
@@ -1082,7 +1109,7 @@ mod tests {
 
     fn run_type_check(source: &str) -> Vec<Diagnostic> {
         let ast = full_moon::parse(source).expect("failed to parse test source");
-        check_ast(Path::new("test.lua"), source, &ast)
+        check_ast(Path::new("test.lua"), source, &ast).diagnostics
     }
 
     #[test]

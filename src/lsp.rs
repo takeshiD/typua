@@ -6,12 +6,13 @@ use std::{
 
 use full_moon::Error as FullMoonError;
 use tokio::sync::RwLock;
-use tower_lsp::jsonrpc::Result as LspResult;
+use tower_lsp::{jsonrpc::Result as LspResult, lsp_types::HoverProviderCapability};
 use tower_lsp::lsp_types::{
-    Diagnostic as LspDiagnostic, DiagnosticSeverity, InitializeParams, InitializeResult,
-    InitializedParams, MessageType, Position, Range, ServerCapabilities,
+    Diagnostic as LspDiagnostic, DiagnosticOptions, DiagnosticServerCapabilities,
+    DiagnosticSeverity, Hover, HoverContents, HoverParams, InitializeParams, InitializeResult,
+    InitializedParams, MarkupContent, MarkupKind, MessageType, Position, Range, ServerCapabilities,
     TextDocumentContentChangeEvent, TextDocumentSyncCapability, TextDocumentSyncKind,
-    TextDocumentSyncOptions, Url,
+    TextDocumentSyncOptions, Url, WorkDoneProgressOptions,
 };
 use tower_lsp::{Client, LanguageServer, LspService, Server, async_trait};
 
@@ -25,7 +26,13 @@ pub struct TypuaLanguageServer {
     client: Client,
     _root: PathBuf,
     _config: Arc<crate::config::Config>,
-    documents: RwLock<HashMap<Url, String>>,
+    documents: RwLock<HashMap<Url, DocumentState>>,
+}
+
+#[derive(Debug, Clone)]
+struct DocumentState {
+    text: String,
+    types: HashMap<(usize, usize), String>,
 }
 
 impl TypuaLanguageServer {
@@ -38,29 +45,23 @@ impl TypuaLanguageServer {
         }
     }
 
-    async fn publish_diagnostics(&self, uri: Url, text: &str) {
-        let diagnostics = match full_moon::parse(text) {
-            Ok(ast) => {
-                let path = uri_to_path(&uri);
-                checker::check_ast(&path, text, &ast)
-                    .into_iter()
-                    .map(convert_checker_diagnostic)
-                    .collect()
-            }
-            Err(errors) => errors.into_iter().map(convert_error).collect(),
-        };
+    async fn update_document(&self, uri: Url, text: String) {
+        let (diagnostics, types) = self.analyze_document(&uri, &text);
+
+        {
+            let mut documents = self.documents.write().await;
+            documents.insert(
+                uri.clone(),
+                DocumentState {
+                    text: text.clone(),
+                    types,
+                },
+            );
+        }
 
         self.client
             .publish_diagnostics(uri, diagnostics, None)
             .await;
-    }
-
-    async fn update_document(&self, uri: Url, text: String) {
-        {
-            let mut documents = self.documents.write().await;
-            documents.insert(uri.clone(), text.clone());
-        }
-        self.publish_diagnostics(uri, &text).await;
     }
 
     async fn remove_document(&self, uri: &Url) {
@@ -82,6 +83,29 @@ impl TypuaLanguageServer {
         // TextDocumentSyncKind::FULL guarantees full content updates.
         *text = change.text;
     }
+
+    fn analyze_document(
+        &self,
+        uri: &Url,
+        text: &str,
+    ) -> (Vec<LspDiagnostic>, HashMap<(usize, usize), String>) {
+        match full_moon::parse(text) {
+            Ok(ast) => {
+                let path = uri_to_path(uri);
+                let result = checker::check_ast(&path, text, &ast);
+                let diagnostics = result
+                    .diagnostics
+                    .into_iter()
+                    .map(convert_checker_diagnostic)
+                    .collect();
+                (diagnostics, result.type_map)
+            }
+            Err(errors) => (
+                errors.into_iter().map(convert_error).collect(),
+                HashMap::new(),
+            ),
+        }
+    }
 }
 
 #[async_trait]
@@ -98,6 +122,7 @@ impl LanguageServer for TypuaLanguageServer {
         Ok(InitializeResult {
             capabilities: ServerCapabilities {
                 text_document_sync: Some(text_document_sync),
+                hover_provider: Some(HoverProviderCapability::Simple(true)),
                 ..ServerCapabilities::default()
             },
             ..InitializeResult::default()
@@ -129,7 +154,7 @@ impl LanguageServer for TypuaLanguageServer {
             let documents = self.documents.read().await;
             documents
                 .get(&params.text_document.uri)
-                .cloned()
+                .map(|doc| doc.text.clone())
                 .unwrap_or_default()
         };
 
@@ -142,6 +167,29 @@ impl LanguageServer for TypuaLanguageServer {
 
     async fn did_close(&self, params: tower_lsp::lsp_types::DidCloseTextDocumentParams) {
         self.remove_document(&params.text_document.uri).await;
+    }
+
+    async fn hover(&self, params: HoverParams) -> LspResult<Option<Hover>> {
+        let uri = params.text_document_position_params.text_document.uri;
+        let position = params.text_document_position_params.position;
+
+        let documents = self.documents.read().await;
+        if let Some(state) = documents.get(&uri) {
+            let line = position.line as usize + 1;
+            let character = position.character as usize + 1;
+            if let Some(ty) = state.types.get(&(line, character)) {
+                let contents = HoverContents::Markup(MarkupContent {
+                    kind: MarkupKind::PlainText,
+                    value: format!("type: {ty}"),
+                });
+                return Ok(Some(Hover {
+                    contents,
+                    range: None,
+                }));
+            }
+        }
+
+        Ok(None)
     }
 }
 
