@@ -6,16 +6,20 @@ use std::{
 
 use full_moon::Error as FullMoonError;
 use tokio::sync::RwLock;
-use tower_lsp::lsp_types::{
-    Diagnostic as LspDiagnostic, DiagnosticSeverity, Hover, HoverContents, HoverParams,
-    InitializeParams, InitializeResult, InitializedParams, MarkupContent, MarkupKind, MessageType,
-    Position, Range, ServerCapabilities, TextDocumentContentChangeEvent,
-    TextDocumentSyncCapability, TextDocumentSyncKind, TextDocumentSyncOptions, Url,
+use tower_lsp::{
+    Client, LanguageServer, LspService, Server, async_trait,
+    jsonrpc::Result as LspResult,
+    lsp_types::{
+        Diagnostic as LspDiagnostic, DiagnosticOptions, DiagnosticServerCapabilities,
+        DiagnosticSeverity, Hover, HoverContents, HoverParams, HoverProviderCapability,
+        InitializeParams, InitializeResult, InitializedParams, InlayHint, InlayHintKind,
+        InlayHintLabel, InlayHintParams, MarkupContent, MarkupKind, MessageType, OneOf, Position,
+        Range, ServerCapabilities, TextDocumentContentChangeEvent, TextDocumentSyncCapability,
+        TextDocumentSyncKind, TextDocumentSyncOptions, Url, WorkDoneProgressOptions,
+    },
 };
-use tower_lsp::{Client, LanguageServer, LspService, Server, async_trait};
-use tower_lsp::{jsonrpc::Result as LspResult, lsp_types::HoverProviderCapability};
 
-use crate::checker;
+use crate::checker::{self, TypeInfo};
 use crate::cli::LspOptions;
 use crate::diagnostics::{Diagnostic as CheckerDiagnostic, Severity, TextRange};
 use crate::error::Result;
@@ -31,7 +35,7 @@ pub struct TypuaLanguageServer {
 #[derive(Debug, Clone)]
 struct DocumentState {
     text: String,
-    types: HashMap<(usize, usize), String>,
+    types: HashMap<(usize, usize), TypeInfo>,
 }
 
 impl TypuaLanguageServer {
@@ -87,7 +91,7 @@ impl TypuaLanguageServer {
         &self,
         uri: &Url,
         text: &str,
-    ) -> (Vec<LspDiagnostic>, HashMap<(usize, usize), String>) {
+    ) -> (Vec<LspDiagnostic>, HashMap<(usize, usize), TypeInfo>) {
         match full_moon::parse(text) {
             Ok(ast) => {
                 let path = uri_to_path(uri);
@@ -122,6 +126,15 @@ impl LanguageServer for TypuaLanguageServer {
             capabilities: ServerCapabilities {
                 text_document_sync: Some(text_document_sync),
                 hover_provider: Some(HoverProviderCapability::Simple(true)),
+                diagnostic_provider: Some(DiagnosticServerCapabilities::Options(
+                    DiagnosticOptions {
+                        identifier: Some("typua".to_string()),
+                        inter_file_dependencies: false,
+                        workspace_diagnostics: false,
+                        work_done_progress_options: WorkDoneProgressOptions::default(),
+                    },
+                )),
+                inlay_hint_provider: Some(OneOf::Left(true)),
                 ..ServerCapabilities::default()
             },
             ..InitializeResult::default()
@@ -176,10 +189,10 @@ impl LanguageServer for TypuaLanguageServer {
         if let Some(state) = documents.get(&uri) {
             let line = position.line as usize + 1;
             let character = position.character as usize + 1;
-            if let Some(ty) = state.types.get(&(line, character)) {
+            if let Some(entry) = lookup_type_at(&state.types, line, character) {
                 let contents = HoverContents::Markup(MarkupContent {
                     kind: MarkupKind::PlainText,
-                    value: format!("type: {ty}"),
+                    value: format!("type: {}", entry.ty),
                 });
                 return Ok(Some(Hover {
                     contents,
@@ -189,6 +202,59 @@ impl LanguageServer for TypuaLanguageServer {
         }
 
         Ok(None)
+    }
+
+    async fn inlay_hint(&self, params: InlayHintParams) -> LspResult<Option<Vec<InlayHint>>> {
+        let uri = params.text_document.uri;
+        let range = params.range;
+        let start_line = range.start.line as usize;
+        let end_line = range.end.line as usize;
+        let start_character = range.start.character as usize;
+        let end_character = range.end.character as usize;
+
+        let documents = self.documents.read().await;
+        let Some(state) = documents.get(&uri) else {
+            return Ok(Some(Vec::new()));
+        };
+
+        let mut entries: Vec<_> = state.types.iter().collect();
+        entries.sort_by(|a, b| a.0.cmp(b.0));
+
+        let mut hints = Vec::new();
+        for (&(line, character), info) in entries {
+            if info.ty == "unknown" {
+                continue;
+            }
+
+            if !position_in_range(
+                line,
+                character,
+                start_line,
+                start_character,
+                end_line,
+                end_character,
+            ) {
+                continue;
+            }
+
+            let position = Position {
+                line: info.end_line.saturating_sub(1) as u32,
+                character: info.end_character.saturating_sub(1) as u32,
+            };
+
+            hints.push(InlayHint {
+                position,
+                label: InlayHintLabel::String(format!(": {}", info.ty)),
+                kind: Some(InlayHintKind::TYPE),
+                text_edits: None,
+                tooltip: None,
+                padding_left: Some(false),
+                padding_right: Some(true),
+                data: None,
+            });
+        }
+
+        Ok(Some(hints))
     }
 }
 
@@ -275,6 +341,38 @@ fn uri_to_path(uri: &Url) -> PathBuf {
     } else {
         Path::new(uri.path()).to_path_buf()
     }
+}
+
+fn lookup_type_at(
+    types: &HashMap<(usize, usize), TypeInfo>,
+    line: usize,
+    character: usize,
+) -> Option<TypeInfo> {
+    types
+        .iter()
+        .filter(|((ty_line, ty_char), _)| *ty_line == line && *ty_char <= character)
+        .max_by_key(|((_, ty_char), _)| *ty_char)
+        .map(|(_, ty)| ty.clone())
+}
+
+fn position_in_range(
+    line: usize,
+    character: usize,
+    start_line: usize,
+    start_character: usize,
+    end_line: usize,
+    end_character: usize,
+) -> bool {
+    if line < start_line || line > end_line {
+        return false;
+    }
+    if line == start_line && character < start_character {
+        return false;
+    }
+    if line == end_line && character > end_character {
+        return false;
+    }
+    true
 }
 
 pub async fn run(options: LspOptions) -> Result<()> {

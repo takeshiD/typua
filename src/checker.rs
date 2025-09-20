@@ -76,9 +76,16 @@ fn error_range(error: &FullMoonError) -> Option<TextRange> {
     Some(TextRange { start, end })
 }
 
+#[derive(Clone, Debug)]
+pub struct TypeInfo {
+    pub ty: String,
+    pub end_line: usize,
+    pub end_character: usize,
+}
+
 pub struct CheckResult {
     pub diagnostics: Vec<Diagnostic>,
-    pub type_map: HashMap<(usize, usize), String>,
+    pub type_map: HashMap<(usize, usize), TypeInfo>,
 }
 
 pub fn check_ast(path: &Path, source: &str, ast: &ast::Ast) -> CheckResult {
@@ -434,7 +441,7 @@ struct TypeChecker<'a> {
     annotations: AnnotationIndex,
     type_registry: TypeRegistry,
     return_expectations: Vec<Vec<AnnotatedType>>,
-    type_info: HashMap<(usize, usize), String>,
+    type_info: HashMap<(usize, usize), TypeInfo>,
 }
 
 impl<'a> TypeChecker<'a> {
@@ -902,9 +909,20 @@ impl<'a> TypeChecker<'a> {
     }
 
     fn record_type(&mut self, token: &TokenReference, ty: TypeKind) {
-        let position = token.token().start_position();
-        self.type_info
-            .insert((position.line(), position.character()), ty.to_string());
+        if matches!(ty, TypeKind::Unknown) {
+            return;
+        }
+
+        let start = token.token().start_position();
+        let end = token.token().end_position();
+        self.type_info.insert(
+            (start.line(), start.character()),
+            TypeInfo {
+                ty: ty.to_string(),
+                end_line: end.line(),
+                end_character: end.character(),
+            },
+        );
     }
 
     fn lookup(&self, name: &str) -> Option<TypeKind> {
