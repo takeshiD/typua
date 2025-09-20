@@ -2,6 +2,9 @@
 name = "typua"
 version = "0.1.0"
 edition = "2024"
+license = "MIT"
+authors = ["takeshid<goriponikeike55@gmail.com>"]
+description = "A lua typecheker and language server"
 
 [dependencies]
 anyhow = "1.0.100"
