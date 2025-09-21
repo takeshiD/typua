@@ -2,6 +2,7 @@ use std::fs::File;
 use std::process;
 use std::sync::Arc;
 
+use tracing_subscriber::EnvFilter;
 use typua::{
     Result, TypuaError, checker,
     cli::{self, CheckOptions, Command, LspOptions},
@@ -42,7 +43,7 @@ fn handle_check(options: CheckOptions) -> Result<()> {
 fn handle_lsp(options: LspOptions) -> Result<()> {
     let xdg_dir = xdg::BaseDirectories::with_prefix("typua");
     let log_path = xdg_dir
-        .place_cache_file("lsp.log")
+        .place_cache_file("log.json")
         .expect("failed to create log dir");
     let log_file = if !log_path.exists() {
         Arc::new(File::create(log_path).expect("failed to create log file"))
@@ -55,8 +56,10 @@ fn handle_lsp(options: LspOptions) -> Result<()> {
         )
     };
     tracing_subscriber::fmt()
+        .with_env_filter(EnvFilter::from_default_env())
         .with_ansi(false)
         .with_writer(log_file)
+        .json()
         .init();
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
