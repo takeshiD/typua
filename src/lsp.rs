@@ -4,18 +4,20 @@ use std::{
     sync::Arc,
 };
 
+use tracing::{Level, event};
+
 use full_moon::Error as FullMoonError;
 use tokio::sync::RwLock;
 use tower_lsp::{
     Client, LanguageServer, LspService, Server, async_trait,
     jsonrpc::Result as LspResult,
     lsp_types::{
-        Diagnostic as LspDiagnostic, DiagnosticOptions, DiagnosticServerCapabilities,
-        DiagnosticSeverity, Hover, HoverContents, HoverParams, HoverProviderCapability,
-        InitializeParams, InitializeResult, InitializedParams, InlayHint, InlayHintKind,
-        InlayHintLabel, InlayHintParams, MarkupContent, MarkupKind, MessageType, OneOf, Position,
-        Range, ServerCapabilities, TextDocumentContentChangeEvent, TextDocumentSyncCapability,
-        TextDocumentSyncKind, TextDocumentSyncOptions, Url, WorkDoneProgressOptions,
+        Diagnostic as LspDiagnostic, DiagnosticSeverity, Hover, HoverContents, HoverParams,
+        HoverProviderCapability, InitializeParams, InitializeResult, InitializedParams, InlayHint,
+        InlayHintKind, InlayHintLabel, InlayHintParams, MarkupContent, MarkupKind, MessageType,
+        OneOf, Position, Range, ServerCapabilities, ServerInfo, TextDocumentContentChangeEvent,
+        TextDocumentSyncCapability, TextDocumentSyncKind, TextDocumentSyncOptions, Url,
+        WorkspaceFoldersServerCapabilities, WorkspaceServerCapabilities,
     },
 };
 
@@ -142,22 +144,42 @@ impl LanguageServer for TypuaLanguageServer {
     }
 
     async fn initialized(&self, _: InitializedParams) {
+        let log_msg = format!("initialized in {:?}", self._root);
         self.client
-            .log_message(MessageType::INFO, "Typua language server initialized")
+            .log_message(MessageType::INFO, log_msg.clone())
             .await;
+        event!(Level::INFO, "{}", log_msg);
     }
 
     async fn shutdown(&self) -> LspResult<()> {
+        let log_msg = format!("shutdown in {:?}", self._root);
+        self.client
+            .log_message(MessageType::INFO, log_msg.clone())
+            .await;
+        event!(Level::INFO, "{}", log_msg);
         Ok(())
     }
 
-    async fn did_open(&self, params: tower_lsp::lsp_types::DidOpenTextDocumentParams) {
+    async fn did_open(&self, params: DidOpenTextDocumentParams) {
+        let log_msg = format!("did open {} in {:?}", params.text_document.uri, self._root);
+        self.client
+            .log_message(MessageType::LOG, log_msg.clone())
+            .await;
+        event!(Level::DEBUG, "{}", log_msg);
         let text_document = params.text_document;
         self.update_document(text_document.uri, text_document.text)
             .await;
     }
 
-    async fn did_change(&self, params: tower_lsp::lsp_types::DidChangeTextDocumentParams) {
+    async fn did_change(&self, params: DidChangeTextDocumentParams) {
+        let log_msg = format!(
+            "did change {} in {:?}",
+            params.text_document.uri, self._root
+        );
+        self.client
+            .log_message(MessageType::LOG, log_msg.clone())
+            .await;
+        event!(Level::DEBUG, "{}", log_msg);
         if params.content_changes.is_empty() {
             return;
         }
@@ -178,6 +200,11 @@ impl LanguageServer for TypuaLanguageServer {
     }
 
     async fn did_close(&self, params: tower_lsp::lsp_types::DidCloseTextDocumentParams) {
+        let log_msg = format!("did close {} in {:?}", params.text_document.uri, self._root);
+        self.client
+            .log_message(MessageType::LOG, log_msg.clone())
+            .await;
+        event!(Level::DEBUG, "{}", log_msg);
         self.remove_document(&params.text_document.uri).await;
     }
 
@@ -186,6 +213,14 @@ impl LanguageServer for TypuaLanguageServer {
         let position = params.text_document_position_params.position;
 
         let documents = self.documents.read().await;
+        let log_msg = format!(
+            "hover {} (line:{}, char:{}) in {:?}",
+            uri, position.line, position.character, self._root
+        );
+        self.client
+            .log_message(MessageType::LOG, log_msg.clone())
+            .await;
+        event!(Level::DEBUG, "{}", log_msg);
         if let Some(state) = documents.get(&uri) {
             let line = position.line as usize + 1;
             let character = position.character as usize + 1;

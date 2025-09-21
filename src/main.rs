@@ -1,4 +1,6 @@
+use std::fs::File;
 use std::process;
+use std::sync::Arc;
 
 use typua::{
     Result, TypuaError, checker,
@@ -38,6 +40,24 @@ fn handle_check(options: CheckOptions) -> Result<()> {
 }
 
 fn handle_lsp(options: LspOptions) -> Result<()> {
+    let xdg_dir = xdg::BaseDirectories::with_prefix("typua");
+    let log_path = xdg_dir
+        .place_cache_file("lsp.log")
+        .expect("failed to create log dir");
+    let log_file = if !log_path.exists() {
+        Arc::new(File::create(log_path).expect("failed to create log file"))
+    } else {
+        Arc::new(
+            File::options()
+                .append(true)
+                .open(log_path)
+                .expect("failed to open log file"),
+        )
+    };
+    tracing_subscriber::fmt()
+        .with_ansi(false)
+        .with_writer(log_file)
+        .init();
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
