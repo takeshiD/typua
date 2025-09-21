@@ -12,10 +12,11 @@ use tower_lsp::{
     Client, LanguageServer, LspService, Server, async_trait,
     jsonrpc::Result as LspResult,
     lsp_types::{
-        Diagnostic as LspDiagnostic, DiagnosticSeverity, Hover, HoverContents, HoverParams,
-        HoverProviderCapability, InitializeParams, InitializeResult, InitializedParams, InlayHint,
-        InlayHintKind, InlayHintLabel, InlayHintParams, MarkupContent, MarkupKind, MessageType,
-        OneOf, Position, Range, ServerCapabilities, ServerInfo, TextDocumentContentChangeEvent,
+        Diagnostic as LspDiagnostic, DiagnosticSeverity, DidChangeTextDocumentParams,
+        DidOpenTextDocumentParams, Hover, HoverContents, HoverParams, HoverProviderCapability,
+        InitializeParams, InitializeResult, InitializedParams, InlayHint, InlayHintKind,
+        InlayHintLabel, InlayHintParams, MarkupContent, MarkupKind, MessageType, OneOf, Position,
+        Range, ServerCapabilities, ServerInfo, TextDocumentContentChangeEvent,
         TextDocumentSyncCapability, TextDocumentSyncKind, TextDocumentSyncOptions, Url,
         WorkspaceFoldersServerCapabilities, WorkspaceServerCapabilities,
     },
@@ -25,6 +26,8 @@ use crate::checker::{self, TypeInfo};
 use crate::cli::LspOptions;
 use crate::diagnostics::{Diagnostic as CheckerDiagnostic, Severity, TextRange};
 use crate::error::Result;
+
+const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 #[derive(Debug)]
 pub struct TypuaLanguageServer {
@@ -125,21 +128,23 @@ impl LanguageServer for TypuaLanguageServer {
         });
 
         Ok(InitializeResult {
+            server_info: Some(ServerInfo {
+                name: "typua".to_string(),
+                version: Some(VERSION.to_string()),
+            }),
             capabilities: ServerCapabilities {
                 text_document_sync: Some(text_document_sync),
                 hover_provider: Some(HoverProviderCapability::Simple(true)),
-                diagnostic_provider: Some(DiagnosticServerCapabilities::Options(
-                    DiagnosticOptions {
-                        identifier: Some("typua".to_string()),
-                        inter_file_dependencies: false,
-                        workspace_diagnostics: false,
-                        work_done_progress_options: WorkDoneProgressOptions::default(),
-                    },
-                )),
                 inlay_hint_provider: Some(OneOf::Left(true)),
+                workspace: Some(WorkspaceServerCapabilities {
+                    workspace_folders: Some(WorkspaceFoldersServerCapabilities {
+                        supported: Some(true),
+                        change_notifications: Some(OneOf::Left(true)),
+                    }),
+                    file_operations: None,
+                }),
                 ..ServerCapabilities::default()
             },
-            ..InitializeResult::default()
         })
     }
 
@@ -211,7 +216,6 @@ impl LanguageServer for TypuaLanguageServer {
     async fn hover(&self, params: HoverParams) -> LspResult<Option<Hover>> {
         let uri = params.text_document_position_params.text_document.uri;
         let position = params.text_document_position_params.position;
-
         let documents = self.documents.read().await;
         let log_msg = format!(
             "hover {} (line:{}, char:{}) in {:?}",
@@ -224,22 +228,33 @@ impl LanguageServer for TypuaLanguageServer {
         if let Some(state) = documents.get(&uri) {
             let line = position.line as usize + 1;
             let character = position.character as usize + 1;
-            if let Some(((start_line, start_char), entry)) = lookup_type_at(&state.types, line, character) {
-                if entry.ty != "unknown" {
-                    let contents = HoverContents::Markup(MarkupContent {
-                        kind: MarkupKind::Markdown,
-                        value: format!("**Type**\n`{}`", entry.ty),
-                    });
-                    let range = Some(Range {
-                        start: Position { line: start_line.saturating_sub(1) as u32, character: start_char.saturating_sub(1) as u32 },
-                        end: Position { line: entry.end_line.saturating_sub(1) as u32, character: entry.end_character.saturating_sub(1) as u32 },
-                    });
-                    return Ok(Some(Hover { contents, range }));
-                }
+            if let Some(((start_line, start_char), entry)) =
+                lookup_type_at(&state.types, line, character)
+                && entry.ty != "unknown"
+            {
+                let contents = HoverContents::Markup(MarkupContent {
+                    kind: MarkupKind::Markdown,
+                    value: format!("**Type**\n`{}`", entry.ty),
+                });
+                let range = Some(Range {
+                    start: Position {
+                        line: start_line.saturating_sub(1) as u32,
+                        character: start_char.saturating_sub(1) as u32,
+                    },
+                    end: Position {
+                        line: entry.end_line.saturating_sub(1) as u32,
+                        character: entry.end_character.saturating_sub(1) as u32,
+                    },
+                });
+                return Ok(Some(Hover { contents, range }));
             }
         }
-
-        Ok(None)
+        Ok(Some(Hover {
+            contents: HoverContents::Scalar(tower_lsp::lsp_types::MarkedString::String(
+                "Not infered...".to_string(),
+            )),
+            range: None,
+        }))
     }
 
     async fn inlay_hint(&self, params: InlayHintParams) -> LspResult<Option<Vec<InlayHint>>> {
