@@ -5,5 +5,6 @@ pub mod diagnostics;
 pub mod error;
 pub mod lsp;
 pub mod workspace;
+pub mod typing;
 
 pub use error::{Result, TypuaError};
