@@ -16,6 +16,7 @@ use crate::{
     error::{Result, TypuaError},
     workspace,
 };
+use crate::typing::{infer::expr as infer_expr, types as tty};
 
 #[derive(Debug, Default)]
 pub struct CheckReport {
@@ -77,12 +78,6 @@ fn error_range(error: &FullMoonError) -> Option<TextRange> {
 }
 
 #[derive(Clone, Debug)]
-pub struct TypeInfo {
-    pub ty: String,
-    pub end_line: usize,
-    pub end_character: usize,
-}
-
 pub struct CheckResult {
     pub diagnostics: Vec<Diagnostic>,
     pub type_map: HashMap<(usize, usize), TypeInfo>,
@@ -105,6 +100,35 @@ enum TypeKind {
     Thread,
     Custom(String),
     Union(Vec<TypeKind>),
+    Generic(String),
+    Applied {
+        base: Box<TypeKind>,
+        args: Vec<TypeKind>,
+    },
+    FunctionSig(Box<FunctionType>),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Default)]
+pub struct TypeInfo {
+    pub ty: String,
+    pub end_line: usize,
+    pub end_character: usize,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Default)]
+struct FunctionType {
+    generics: Vec<String>,
+    params: Vec<FunctionParam>,
+    returns: Vec<TypeKind>,
+    vararg: Option<Box<TypeKind>>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct FunctionParam {
+    name: Option<String>,
+    ty: TypeKind,
+    is_self: bool,
+    is_vararg: bool,
 }
 
 impl TypeKind {
@@ -120,6 +144,9 @@ impl TypeKind {
             TypeKind::Thread => "thread",
             TypeKind::Custom(_) => "custom",
             TypeKind::Union(_) => "union",
+            TypeKind::Generic(_) => "generic",
+            TypeKind::Applied { .. } => "applied",
+            TypeKind::FunctionSig(_) => "function",
         }
     }
 
@@ -417,7 +444,7 @@ fn parse_atomic_type(raw: &str) -> Option<TypeKind> {
         "number" => Some(TypeKind::Number),
         "integer" | "int" => Some(TypeKind::Number),
         "table" => Some(TypeKind::Table),
-        "function" => Some(TypeKind::Function),
+        "function" | "fun" => Some(TypeKind::Function),
         "thread" => Some(TypeKind::Thread),
         "any" => None,
         _ => Some(TypeKind::Custom(raw.to_string())),
@@ -996,7 +1023,10 @@ impl<'a> TypeChecker<'a> {
             ast::Expression::BinaryOperator { lhs, binop, rhs } => {
                 self.infer_binary(lhs, binop, rhs)
             }
-            ast::Expression::FunctionCall(_) => TypeKind::Unknown,
+            ast::Expression::FunctionCall(call) => {
+                self.try_record_function_call_type(call);
+                TypeKind::Unknown
+            }
             ast::Expression::Var(var) => self.infer_var(var),
             ast::Expression::Symbol(token) => match token.token().token_type() {
                 TokenType::Symbol {
@@ -1109,6 +1139,22 @@ impl<'a> TypeChecker<'a> {
 
     fn path_buf(&self) -> PathBuf {
         self.path.to_path_buf()
+    }
+
+    fn try_record_function_call_type(&mut self, call: &ast::FunctionCall) {
+        // Only simple name calls for now to place the hover position
+        let name_token = match call.prefix() { ast::Prefix::Name(n) => n, _ => return };
+
+        // Collect argument types from current heuristic inference and convert
+        let mut args_typing: Vec<tty::Type> = Vec::new();
+        // Note: full_moon API differences across versions; for now, skip reading args
+        // and proceed with zero-arg inference to avoid API coupling.
+        
+        let mut next = 0u32;
+        let callee = tty::Type::Var(tty::TyVarId({ next += 1; next - 1 }));
+        if let Ok((_ret, _)) = infer_expr::infer_call_return(callee, args_typing) {
+            // Intentionally not recording to avoid interfering with existing diagnostics yet.
+        }
     }
 }
 
