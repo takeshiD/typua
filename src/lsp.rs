@@ -189,15 +189,18 @@ impl LanguageServer for TypuaLanguageServer {
         if let Some(state) = documents.get(&uri) {
             let line = position.line as usize + 1;
             let character = position.character as usize + 1;
-            if let Some(entry) = lookup_type_at(&state.types, line, character) {
-                let contents = HoverContents::Markup(MarkupContent {
-                    kind: MarkupKind::PlainText,
-                    value: format!("type: {}", entry.ty),
-                });
-                return Ok(Some(Hover {
-                    contents,
-                    range: None,
-                }));
+            if let Some(((start_line, start_char), entry)) = lookup_type_at(&state.types, line, character) {
+                if entry.ty != "unknown" {
+                    let contents = HoverContents::Markup(MarkupContent {
+                        kind: MarkupKind::Markdown,
+                        value: format!("**Type**\n`{}`", entry.ty),
+                    });
+                    let range = Some(Range {
+                        start: Position { line: start_line.saturating_sub(1) as u32, character: start_char.saturating_sub(1) as u32 },
+                        end: Position { line: entry.end_line.saturating_sub(1) as u32, character: entry.end_character.saturating_sub(1) as u32 },
+                    });
+                    return Ok(Some(Hover { contents, range }));
+                }
             }
         }
 
@@ -347,7 +350,7 @@ fn lookup_type_at(
     types: &HashMap<(usize, usize), TypeInfo>,
     line: usize,
     character: usize,
-) -> Option<TypeInfo> {
+) -> Option<((usize, usize), TypeInfo)> {
     types
         .iter()
         .filter(|((start_line, start_char), info)| {
@@ -363,7 +366,7 @@ fn lookup_type_at(
             true
         })
         .max_by_key(|((start_line, start_char), _)| (*start_line, *start_char))
-        .map(|(_, info)| info.clone())
+        .map(|(k, info)| (*k, info.clone()))
 }
 
 fn position_in_range(
