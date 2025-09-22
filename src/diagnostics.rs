@@ -10,6 +10,15 @@ pub enum Severity {
     Hint,
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub enum DiagnosticCode {
+    AssignTypeMismatch,
+    ParamTypeMismatch,
+    ReturnTypeMismatch,
+    UndefinedField,
+    SyntaxError,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TextPosition {
     pub line: usize,
@@ -37,15 +46,22 @@ pub struct Diagnostic {
     pub message: String,
     pub severity: Severity,
     pub range: Option<TextRange>,
+    pub code: Option<DiagnosticCode>,
 }
 
 impl Diagnostic {
-    pub fn error(path: PathBuf, message: impl Into<String>, range: Option<TextRange>) -> Self {
+    pub fn error(
+        path: PathBuf,
+        message: impl Into<String>,
+        range: Option<TextRange>,
+        code: Option<DiagnosticCode>,
+    ) -> Self {
         Self {
             path,
             message: message.into(),
             severity: Severity::Error,
             range,
+            code,
         }
     }
 }

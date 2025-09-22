@@ -43,3 +43,4 @@ local y = Container:set_value("hello")
 local z = Container:set_value({})
 print(x)
 print(y)
+local a = 12

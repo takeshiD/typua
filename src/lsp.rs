@@ -12,13 +12,14 @@ use tower_lsp::{
     Client, LanguageServer, LspService, Server, async_trait,
     jsonrpc::Result as LspResult,
     lsp_types::{
-        Diagnostic as LspDiagnostic, DiagnosticSeverity, DidChangeTextDocumentParams,
-        DidOpenTextDocumentParams, Hover, HoverContents, HoverParams, HoverProviderCapability,
-        InitializeParams, InitializeResult, InitializedParams, InlayHint, InlayHintKind,
-        InlayHintLabel, InlayHintParams, MarkupContent, MarkupKind, MessageType, OneOf, Position,
-        Range, ServerCapabilities, ServerInfo, TextDocumentContentChangeEvent,
-        TextDocumentSyncCapability, TextDocumentSyncKind, TextDocumentSyncOptions, Url,
-        WorkspaceFoldersServerCapabilities, WorkspaceServerCapabilities,
+        CodeDescription, Diagnostic as LspDiagnostic, DiagnosticSeverity,
+        DidChangeTextDocumentParams, DidOpenTextDocumentParams, Hover, HoverContents, HoverParams,
+        HoverProviderCapability, InitializeParams, InitializeResult, InitializedParams, InlayHint,
+        InlayHintKind, InlayHintLabel, InlayHintParams, MarkupContent, MarkupKind, MessageType,
+        NumberOrString, OneOf, Position, Range, ServerCapabilities, ServerInfo,
+        TextDocumentContentChangeEvent, TextDocumentSyncCapability, TextDocumentSyncKind,
+        TextDocumentSyncOptions, Url, WorkspaceFoldersServerCapabilities,
+        WorkspaceServerCapabilities,
     },
 };
 
@@ -37,10 +38,16 @@ pub struct TypuaLanguageServer {
     documents: RwLock<HashMap<Url, DocumentState>>,
 }
 
+#[derive(Debug, Clone, PartialEq, PartialOrd, Eq, Hash)]
+pub struct DocumentPosition {
+    pub row: usize,
+    pub col: usize,
+}
+
 #[derive(Debug, Clone)]
 struct DocumentState {
     text: String,
-    types: HashMap<(usize, usize), TypeInfo>,
+    types: HashMap<DocumentPosition, TypeInfo>,
 }
 
 impl TypuaLanguageServer {
@@ -96,7 +103,7 @@ impl TypuaLanguageServer {
         &self,
         uri: &Url,
         text: &str,
-    ) -> (Vec<LspDiagnostic>, HashMap<(usize, usize), TypeInfo>) {
+    ) -> (Vec<LspDiagnostic>, HashMap<DocumentPosition, TypeInfo>) {
         match full_moon::parse(text) {
             Ok(ast) => {
                 let path = uri_to_path(uri);
@@ -260,10 +267,19 @@ impl LanguageServer for TypuaLanguageServer {
     async fn inlay_hint(&self, params: InlayHintParams) -> LspResult<Option<Vec<InlayHint>>> {
         let uri = params.text_document.uri;
         let range = params.range;
-        let start_line = range.start.line as usize;
-        let end_line = range.end.line as usize;
-        let start_character = range.start.character as usize;
-        let end_character = range.end.character as usize;
+        let start_row = range.start.line as usize;
+        let end_row = range.end.line as usize;
+        let start_col = range.start.character as usize;
+        let end_col = range.end.character as usize;
+
+        let log_msg = format!(
+            "inlay-hint {} (row:{}-{}, col:{}-{}) in {:?}",
+            uri, start_row, end_row, start_col, end_col, self._root
+        );
+        self.client
+            .log_message(MessageType::LOG, log_msg.clone())
+            .await;
+        event!(Level::DEBUG, "{}", log_msg);
 
         let documents = self.documents.read().await;
         let Some(state) = documents.get(&uri) else {
@@ -271,30 +287,25 @@ impl LanguageServer for TypuaLanguageServer {
         };
 
         let mut entries: Vec<_> = state.types.iter().collect();
-        entries.sort_by(|a, b| a.0.cmp(b.0));
+        entries.sort_by(|a, b| a.0.row.cmp(&b.0.row));
 
         let mut hints = Vec::new();
-        for (&(line, character), info) in entries {
-            if info.ty == "unknown" {
+        for (&DocumentPosition { row, col }, info) in entries {
+            if !position_in_range(row, col, start_row, start_col, end_row, end_col) {
+                let log_msg = format!(
+                    "inlay-hint out-of-range {} (row:{}, col:{}) in {:?}",
+                    uri, row, col, self._root
+                );
+                self.client
+                    .log_message(MessageType::WARNING, log_msg.clone())
+                    .await;
+                event!(Level::WARN, "{}", log_msg);
                 continue;
             }
-
-            if !position_in_range(
-                line,
-                character,
-                start_line,
-                start_character,
-                end_line,
-                end_character,
-            ) {
-                continue;
-            }
-
             let position = Position {
                 line: info.end_line.saturating_sub(1) as u32,
                 character: info.end_character.saturating_sub(1) as u32,
             };
-
             hints.push(InlayHint {
                 position,
                 label: InlayHintLabel::String(format!(": {}", info.ty)),
@@ -319,7 +330,9 @@ fn convert_error(error: FullMoonError) -> LspDiagnostic {
             end: lsp_position(end),
         },
         severity: Some(DiagnosticSeverity::ERROR),
-        code: None,
+        code: Some(tower_lsp::lsp_types::NumberOrString::String(
+            "error".to_string(),
+        )),
         code_description: None,
         source: Some("typua".to_string()),
         message: error.error_message().to_string(),
@@ -345,8 +358,10 @@ fn convert_checker_diagnostic(diagnostic: CheckerDiagnostic) -> LspDiagnostic {
     LspDiagnostic {
         range,
         severity,
-        code: None,
-        code_description: None,
+        code: Some(NumberOrString::String("diagnostic".to_string())),
+        code_description: Some(CodeDescription {
+            href: Url::parse("https://example.com").expect("parse failed"),
+        }),
         source: Some("typua".to_string()),
         message: diagnostic.message,
         related_information: None,
@@ -397,17 +412,19 @@ fn uri_to_path(uri: &Url) -> PathBuf {
 }
 
 fn lookup_type_at(
-    types: &HashMap<(usize, usize), TypeInfo>,
+    types: &HashMap<DocumentPosition, TypeInfo>,
     line: usize,
     character: usize,
 ) -> Option<((usize, usize), TypeInfo)> {
     types
         .iter()
-        .filter(|((start_line, start_char), info)| {
-            if line < *start_line || line > info.end_line {
+        .filter(|(pos, info)| {
+            let start_line = pos.row;
+            let start_char = pos.col;
+            if line < start_line || line > info.end_line {
                 return false;
             }
-            if line == *start_line && character < *start_char {
+            if line == start_line && character < start_char {
                 return false;
             }
             if line == info.end_line && character > info.end_character {
@@ -415,25 +432,25 @@ fn lookup_type_at(
             }
             true
         })
-        .max_by_key(|((start_line, start_char), _)| (*start_line, *start_char))
-        .map(|(k, info)| (*k, info.clone()))
+        .max_by_key(|(pos, _)| (pos.row, pos.col))
+        .map(|(k, info)| ((k.row, k.col), info.clone()))
 }
 
 fn position_in_range(
     line: usize,
     character: usize,
-    start_line: usize,
-    start_character: usize,
-    end_line: usize,
-    end_character: usize,
+    start_row: usize,
+    start_col: usize,
+    end_row: usize,
+    end_col: usize,
 ) -> bool {
-    if line < start_line || line > end_line {
+    if line < start_row || line > end_row {
         return false;
     }
-    if line == start_line && character < start_character {
+    if line == start_row && character < start_col {
         return false;
     }
-    if line == end_line && character > end_character {
+    if line == end_row && character > end_col {
         return false;
     }
     true

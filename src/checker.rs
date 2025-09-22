@@ -10,13 +10,14 @@ use full_moon::{
     tokenizer::{Position, Symbol, TokenReference, TokenType},
 };
 
+use crate::typing::{infer::expr as infer_expr, types as tty};
 use crate::{
     cli::CheckOptions,
-    diagnostics::{Diagnostic, Severity, TextPosition, TextRange},
+    diagnostics::{Diagnostic, DiagnosticCode, Severity, TextPosition, TextRange},
     error::{Result, TypuaError},
+    lsp::DocumentPosition,
     workspace,
 };
-use crate::typing::{infer::expr as infer_expr, types as tty};
 
 #[derive(Debug, Default)]
 pub struct CheckReport {
@@ -67,7 +68,8 @@ fn read_source(path: &Path) -> Result<String> {
 
 fn to_syntax_diagnostic(path: &Path, error: FullMoonError) -> Diagnostic {
     let range = error_range(&error);
-    Diagnostic::error(path.to_path_buf(), error.error_message(), range)
+    let code = Some(DiagnosticCode::SyntaxError);
+    Diagnostic::error(path.to_path_buf(), error.error_message(), range, code)
 }
 
 fn error_range(error: &FullMoonError) -> Option<TextRange> {
@@ -80,7 +82,7 @@ fn error_range(error: &FullMoonError) -> Option<TextRange> {
 #[derive(Clone, Debug)]
 pub struct CheckResult {
     pub diagnostics: Vec<Diagnostic>,
-    pub type_map: HashMap<(usize, usize), TypeInfo>,
+    pub type_map: HashMap<DocumentPosition, TypeInfo>,
 }
 
 pub fn check_ast(path: &Path, source: &str, ast: &ast::Ast) -> CheckResult {
@@ -100,6 +102,7 @@ enum TypeKind {
     Thread,
     Custom(String),
     Union(Vec<TypeKind>),
+    Array(Box<TypeKind>),
     Generic(String),
     Applied {
         base: Box<TypeKind>,
@@ -144,6 +147,7 @@ impl TypeKind {
             TypeKind::Thread => "thread",
             TypeKind::Custom(_) => "custom",
             TypeKind::Union(_) => "union",
+            TypeKind::Array(_) => "array",
             TypeKind::Generic(_) => "generic",
             TypeKind::Applied { .. } => "applied",
             TypeKind::FunctionSig(_) => "function",
@@ -275,15 +279,14 @@ impl TypeRegistry {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 struct AnnotatedType {
     raw: String,
     kind: Option<TypeKind>,
 }
 
 impl AnnotatedType {
-    fn new(raw: String) -> Self {
-        let kind = parse_type(&raw);
+    fn new(raw: String, kind: Option<TypeKind>) -> Self {
         Self { raw, kind }
     }
 }
@@ -295,7 +298,7 @@ enum AnnotationUsage {
     Return,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 struct Annotation {
     usage: AnnotationUsage,
     name: Option<String>,
@@ -363,13 +366,13 @@ impl AnnotationIndex {
 
 fn parse_annotation(line: &str) -> Option<Annotation> {
     if let Some(rest) = line.strip_prefix("---@type") {
-        let mut parts = rest.split_whitespace();
-        let type_token = parts.next()?;
-        let name = parts.next().map(|value| value.to_string());
-        let ty = AnnotatedType::new(type_token.to_string());
+        // let mut parts = rest.split_whitespace();
+        let type_token = rest.trim();
+        // let name = parts.next().map(|value| value.to_string());
+        let ty = AnnotatedType::new(type_token.to_string(), parse_type(type_token));
         return Some(Annotation {
             usage: AnnotationUsage::Type,
-            name,
+            name: None,
             ty,
         });
     }
@@ -378,7 +381,7 @@ fn parse_annotation(line: &str) -> Option<Annotation> {
         let mut parts = rest.split_whitespace();
         let name = parts.next()?.to_string();
         let type_token = parts.next().unwrap_or("any");
-        let ty = AnnotatedType::new(type_token.to_string());
+        let ty = AnnotatedType::new(type_token.to_string(), parse_type(type_token));
         return Some(Annotation {
             usage: AnnotationUsage::Param,
             name: Some(name),
@@ -390,14 +393,13 @@ fn parse_annotation(line: &str) -> Option<Annotation> {
         let mut parts = rest.split_whitespace();
         let type_token = parts.next().unwrap_or("any");
         let name = parts.next().map(|value| value.to_string());
-        let ty = AnnotatedType::new(type_token.to_string());
+        let ty = AnnotatedType::new(type_token.to_string(), parse_type(type_token));
         return Some(Annotation {
             usage: AnnotationUsage::Return,
             name,
             ty,
         });
     }
-
     None
 }
 
@@ -408,17 +410,27 @@ struct ClassDeclaration {
     parent: Option<String>,
 }
 
+/// ```
+/// assert_eq(parse_type(""), None);
+/// assert_eq(parse_type("number"), Some(TypeKind::Number));
+/// assert_eq(parse_type("number?"), Some(vec![TypeKind::Number, TypeKind::Nil]));
+/// assert_eq(parse_type("number| string"), Some(vec![TypeKind::Number, TypeKind::String]));
+/// assert_eq(parse_type("number | string | nil"), Some(vec![TypeKind::Number, TypeKind::String,
+/// TypeKind::Nil]));
+/// ```
 fn parse_type(raw: &str) -> Option<TypeKind> {
     let trimmed = raw.trim();
     if trimmed.is_empty() {
         return None;
     }
 
+    // optional
     if let Some(stripped) = trimmed.strip_suffix('?') {
         let base_type = parse_type(stripped.trim())?;
         return Some(make_union(vec![base_type, TypeKind::Nil]));
     }
 
+    // union
     if trimmed.contains('|') {
         let mut members = Vec::new();
         for part in trimmed.split('|').map(str::trim).filter(|p| !p.is_empty()) {
@@ -426,6 +438,22 @@ fn parse_type(raw: &str) -> Option<TypeKind> {
         }
         return Some(make_union(members));
     }
+
+    // array
+    if let Some(stripped) = trimmed.strip_suffix("[]") {
+        let base_type = parse_type(stripped.trim())?;
+        return Some(TypeKind::Array(Box::new(base_type)));
+    }
+
+    // function
+    // if let Some(stripped) = trimmed.strip_prefix("fun") {
+    //     let pos_left_paren = trimmed.find('(').expect("Missing left paren");
+    //     let pos_right_paren = trimmed.find(')').expect("Missing right paren");
+    //     let mut params = Vec::new();
+    //     for part in trimmed.split(',').map(str::trim).filter(|p| !p.starts_with(')'))
+    //     let base_type = parse_type(stripped.trim())?;
+    //     return Some(TypeKind::Array(Box::new(base_type)));
+    // }
 
     parse_atomic_type(trimmed)
 }
@@ -459,7 +487,7 @@ fn make_union(types: Vec<TypeKind>) -> TypeKind {
             other => flat.push(other),
         }
     }
-
+    // Todo: Should decision ordering
     flat.sort_by_key(|a| a.to_string());
     flat.dedup_by(|a, b| a.matches(b));
 
@@ -512,7 +540,10 @@ fn parse_field_declaration(line: &str) -> Option<(String, AnnotatedType)> {
     let mut parts = rest.split_whitespace();
     let name = parts.next()?.to_string();
     let type_part = parts.next().unwrap_or("any");
-    Some((name, AnnotatedType::new(type_part.to_string())))
+    Some((
+        name,
+        AnnotatedType::new(type_part.to_string(), parse_type(type_part)),
+    ))
 }
 
 struct TypeChecker<'a> {
@@ -522,7 +553,7 @@ struct TypeChecker<'a> {
     annotations: AnnotationIndex,
     type_registry: TypeRegistry,
     return_expectations: Vec<Vec<AnnotatedType>>,
-    type_info: HashMap<(usize, usize), TypeInfo>,
+    type_info: HashMap<DocumentPosition, TypeInfo>,
 }
 
 impl<'a> TypeChecker<'a> {
@@ -620,11 +651,9 @@ impl<'a> TypeChecker<'a> {
             let annotation = annotations.remove(position);
             if let Some(expected) = self.resolve_annotation_kind(&annotation.ty) {
                 if !expected.matches(&inferred) {
-                    let message = format!(
-                        "variable '{name}' is annotated as type {} but inferred type is {}",
-                        annotation.ty.raw, inferred
-                    );
-                    self.push_diagnostic(token, message);
+                    let message =
+                        format!("Cannot assign '{}' to '{}'", annotation.ty.raw, inferred);
+                    self.push_diagnostic(token, message, Some(DiagnosticCode::AssignTypeMismatch));
                 }
                 self.record_type(token, expected.clone());
                 expected
@@ -688,14 +717,22 @@ impl<'a> TypeChecker<'a> {
             let message = format!(
                 "function returns {actual_len} value(s) but only {expected_len} annotated via @return"
             );
-            self.push_diagnostic(ret.token(), message);
+            self.push_diagnostic(
+                ret.token(),
+                message,
+                Some(DiagnosticCode::ReturnTypeMismatch),
+            );
         }
 
         if actual_len < expected_len {
             let message = format!(
                 "function annotated to return {expected_len} value(s) but this return statement provides {actual_len}"
             );
-            self.push_diagnostic(ret.token(), message);
+            self.push_diagnostic(
+                ret.token(),
+                message,
+                Some(DiagnosticCode::ReturnTypeMismatch),
+            );
         }
 
         for (idx, annotation) in expectations.iter().enumerate() {
@@ -713,7 +750,11 @@ impl<'a> TypeChecker<'a> {
                     annotation.raw,
                     actual
                 );
-                self.push_diagnostic(ret.token(), message);
+                self.push_diagnostic(
+                    ret.token(),
+                    message,
+                    Some(DiagnosticCode::ReturnTypeMismatch),
+                );
             }
         }
     }
@@ -738,7 +779,11 @@ impl<'a> TypeChecker<'a> {
                         "field '{field_name}' in class {class_name} expects type {} but inferred type is {}",
                         annotation_message, value_type
                     );
-                    self.push_diagnostic(field_token, message);
+                    self.push_diagnostic(
+                        field_token,
+                        message,
+                        Some(DiagnosticCode::ParamTypeMismatch),
+                    );
                 }
                 return;
             }
@@ -746,7 +791,7 @@ impl<'a> TypeChecker<'a> {
             let message = format!(
                 "class {class_name} is declared exact; field '{field_name}' is not defined"
             );
-            self.push_diagnostic(field_token, message);
+            self.push_diagnostic(field_token, message, Some(DiagnosticCode::UndefinedField));
             return;
         }
 
@@ -973,7 +1018,7 @@ impl<'a> TypeChecker<'a> {
             let message = format!(
                 "variable '{name}' was previously inferred as type {existing} but is now assigned type {ty}"
             );
-            self.push_diagnostic(token, message);
+            self.push_diagnostic(token, message, Some(DiagnosticCode::AssignTypeMismatch));
         }
     }
 
@@ -985,7 +1030,10 @@ impl<'a> TypeChecker<'a> {
         let start = token.token().start_position();
         let end = token.token().end_position();
         self.type_info.insert(
-            (start.line(), start.character()),
+            DocumentPosition {
+                row: start.line(),
+                col: start.character(),
+            },
             TypeInfo {
                 ty: ty.to_string(),
                 end_line: end.line(),
@@ -1119,13 +1167,22 @@ impl<'a> TypeChecker<'a> {
             expected,
             actual
         );
-        self.push_diagnostic(token, message);
+        self.push_diagnostic(token, message, Some(DiagnosticCode::AssignTypeMismatch));
     }
 
-    fn push_diagnostic(&mut self, token: &TokenReference, message: String) {
+    fn push_diagnostic(
+        &mut self,
+        token: &TokenReference,
+        message: String,
+        code: Option<DiagnosticCode>,
+    ) {
         let range = self.range_from_token(token);
-        self.diagnostics
-            .push(Diagnostic::error(self.path_buf(), message, Some(range)));
+        self.diagnostics.push(Diagnostic::error(
+            self.path_buf(),
+            message,
+            Some(range),
+            code,
+        ));
     }
 
     fn range_from_token(&self, token: &TokenReference) -> TextRange {
@@ -1143,15 +1200,21 @@ impl<'a> TypeChecker<'a> {
 
     fn try_record_function_call_type(&mut self, call: &ast::FunctionCall) {
         // Only simple name calls for now to place the hover position
-        let name_token = match call.prefix() { ast::Prefix::Name(n) => n, _ => return };
+        let name_token = match call.prefix() {
+            ast::Prefix::Name(n) => n,
+            _ => return,
+        };
 
         // Collect argument types from current heuristic inference and convert
         let mut args_typing: Vec<tty::Type> = Vec::new();
         // Note: full_moon API differences across versions; for now, skip reading args
         // and proceed with zero-arg inference to avoid API coupling.
-        
+
         let mut next = 0u32;
-        let callee = tty::Type::Var(tty::TyVarId({ next += 1; next - 1 }));
+        let callee = tty::Type::Var(tty::TyVarId({
+            next += 1;
+            next - 1
+        }));
         if let Ok((_ret, _)) = infer_expr::infer_call_return(callee, args_typing) {
             // Intentionally not recording to avoid interfering with existing diagnostics yet.
         }
@@ -1212,23 +1275,127 @@ mod tests {
     use super::*;
     use pretty_assertions::assert_eq;
     use std::path::Path;
+    use unindent::Unindent;
 
-    fn run_type_check(source: &str) -> Vec<Diagnostic> {
+    fn run_type_check(source: &str) -> CheckResult {
         let ast = full_moon::parse(source).expect("failed to parse test source");
-        check_ast(Path::new("test.lua"), source, &ast).diagnostics
+        check_ast(Path::new("test.lua"), source, &ast)
+    }
+    #[test]
+    fn annotation_type() {
+        // normal single type
+        assert_eq!(
+            parse_annotation("---@type number").unwrap(),
+            Annotation {
+                usage: AnnotationUsage::Type,
+                name: None,
+                ty: AnnotatedType {
+                    raw: "number".to_string(),
+                    kind: Some(TypeKind::Number)
+                }
+            }
+        );
+        // normal: optional
+        assert_eq!(
+            parse_annotation("---@type number?").unwrap(),
+            Annotation {
+                usage: AnnotationUsage::Type,
+                name: None,
+                ty: AnnotatedType {
+                    raw: "number?".to_string(),
+                    kind: Some(make_union(vec![TypeKind::Number, TypeKind::Nil]))
+                }
+            }
+        );
+        // normal: union
+        assert_eq!(
+            parse_annotation("---@type number | string").unwrap(),
+            Annotation {
+                usage: AnnotationUsage::Type,
+                name: None,
+                ty: AnnotatedType {
+                    raw: "number | string".to_string(),
+                    kind: Some(make_union(vec![TypeKind::Number, TypeKind::String]))
+                }
+            }
+        );
+        // normal: array
+        assert_eq!(
+            parse_annotation("---@type number[]").unwrap(),
+            Annotation {
+                usage: AnnotationUsage::Type,
+                name: None,
+                ty: AnnotatedType {
+                    raw: "number[]".to_string(),
+                    kind: Some(TypeKind::Array(Box::new(TypeKind::Number))),
+                }
+            }
+        );
+    }
+    #[test]
+    fn local_assignment_non_annotated() {
+        let result = run_type_check(
+            r##"
+            local x = 1
+            x = "oops"
+            "##
+            .unindent()
+            .as_str(),
+        );
+        let actual = result
+            .type_map
+            .get(&DocumentPosition { row: 1, col: 7 })
+            .unwrap();
+        assert_eq!(
+            actual,
+            &TypeInfo {
+                ty: "number".to_string(),
+                end_line: 1,
+                end_character: 8
+            }
+        );
+        assert!(result.diagnostics.is_empty());
+    }
+
+    #[test]
+    fn local_assignment_annotated() {
+        let result = run_type_check(
+            r##"
+            ---@type number
+            local x = 1
+            x = "oops"
+            "##
+            .unindent()
+            .as_str(),
+        );
+        let actual = result
+            .type_map
+            .get(&DocumentPosition { row: 2, col: 7 })
+            .unwrap();
+        assert_eq!(
+            actual,
+            &TypeInfo {
+                ty: "number".to_string(),
+                end_line: 2,
+                end_character: 8
+            }
+        );
+        assert_eq!(result.diagnostics.len(), 1);
+        let diagnostic = &result.diagnostics[0];
+        assert_eq!(diagnostic.severity, Severity::Error);
+        assert_eq!(diagnostic.code.clone().unwrap(), DiagnosticCode::AssignTypeMismatch);
     }
 
     #[test]
     fn reports_variable_reassignment_type_conflict() {
-        let diagnostics = run_type_check(
+        let result = run_type_check(
             r#"
             local x = 1
             x = "oops"
             "#,
         );
 
-        assert_eq!(diagnostics.len(), 1);
-        let diagnostic = &diagnostics[0];
+        let diagnostic = &result.diagnostics[0];
         assert_eq!(diagnostic.severity, Severity::Error);
         assert!(
             diagnostic
@@ -1239,15 +1406,14 @@ mod tests {
 
     #[test]
     fn reports_arithmetic_operand_type_mismatch() {
-        let diagnostics = run_type_check(
+        let result = run_type_check(
             r#"
             local a = "hello"
             local b = a + 1
             "#,
         );
 
-        assert_eq!(diagnostics.len(), 1);
-        let diagnostic = &diagnostics[0];
+        let diagnostic = &result.diagnostics[0];
         assert_eq!(diagnostic.severity, Severity::Error);
         assert!(
             diagnostic
@@ -1258,47 +1424,31 @@ mod tests {
 
     #[test]
     fn allows_consistent_numeric_assignments() {
-        let diagnostics = run_type_check(
+        let result = run_type_check(
             r#"
             local value = 1
             value = value + 2
             "#,
         );
-
-        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+        assert!(result.diagnostics.is_empty());
     }
 
     #[test]
-    fn reports_mismatch_with_type_annotation() {
-        let diagnostics = run_type_check(
+    fn mismatch_type_annotation() {
+        let result = run_type_check(
             r#"
             ---@type string
             local title = 10
             "#,
         );
-
-        assert_eq!(diagnostics.len(), 1, "{diagnostics:?}");
-        let diagnostic = &diagnostics[0];
+        assert_eq!(result.diagnostics.len(), 1);
+        let diagnostic = &result.diagnostics[0];
         assert!(diagnostic.message.contains("annotated as type string"));
     }
 
     #[test]
-    fn reports_mismatch_with_named_annotation() {
-        let diagnostics = run_type_check(
-            r#"
-            ---@type number counter
-            counter = "oops"
-            "#,
-        );
-
-        assert_eq!(diagnostics.len(), 1);
-        let diagnostic = &diagnostics[0];
-        assert!(diagnostic.message.contains("annotated as type number"));
-    }
-
-    #[test]
     fn param_annotation_enforces_type_in_body() {
-        let diagnostics = run_type_check(
+        let result = run_type_check(
             r#"
             ---@param amount number
             local function charge(amount)
@@ -1307,8 +1457,8 @@ mod tests {
             "#,
         );
 
-        assert_eq!(diagnostics.len(), 1);
-        let diagnostic = &diagnostics[0];
+        assert_eq!(result.diagnostics.len(), 1);
+        let diagnostic = &result.diagnostics[0];
         assert!(
             diagnostic
                 .message
@@ -1318,7 +1468,7 @@ mod tests {
 
     #[test]
     fn class_field_annotations_cover_builtin_types() {
-        let diagnostics = run_type_check(
+        let result = run_type_check(
             r#"
             ---@class Data
             ---@field nothing nil
@@ -1342,13 +1492,12 @@ mod tests {
             data.co = coroutine.create(function() end)
             "#,
         );
-
-        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+        assert!(result.diagnostics.is_empty());
     }
 
     #[test]
     fn exact_class_rejects_unknown_fields() {
-        let diagnostics = run_type_check(
+        let result = run_type_check(
             r#"
             ---@class (exact) Point
             ---@field x number
@@ -1362,15 +1511,15 @@ mod tests {
             "#,
         );
 
-        assert_eq!(diagnostics.len(), 1);
-        let diagnostic = &diagnostics[0];
+        assert_eq!(result.diagnostics.len(), 1);
+        let diagnostic = &result.diagnostics[0];
         assert!(diagnostic.message.contains("Point"));
         assert!(diagnostic.message.contains("field 'z'"));
     }
 
     #[test]
     fn class_inheritance_allows_parent_fields() {
-        let diagnostics = run_type_check(
+        let result = run_type_check(
             r#"
             ---@class Vehicle
             ---@field speed number
@@ -1386,12 +1535,12 @@ mod tests {
             "#,
         );
 
-        assert!(diagnostics.is_empty());
+        assert!(result.diagnostics.is_empty());
     }
 
     #[test]
     fn return_annotation_detects_mismatch() {
-        let diagnostics = run_type_check(
+        let result = run_type_check(
             r#"
             ---@return number
             local function value()
@@ -1400,14 +1549,14 @@ mod tests {
             "#,
         );
 
-        assert_eq!(diagnostics.len(), 1);
-        let diagnostic = &diagnostics[0];
+        assert_eq!(result.diagnostics.len(), 1);
+        let diagnostic = &result.diagnostics[0];
         assert!(diagnostic.message.contains("return value #1"));
     }
 
     #[test]
     fn return_annotation_accepts_correct_type() {
-        let diagnostics = run_type_check(
+        let result = run_type_check(
             r#"
             ---@return number
             local function value()
@@ -1416,12 +1565,12 @@ mod tests {
             "#,
         );
 
-        assert!(diagnostics.is_empty());
+        assert!(result.diagnostics.is_empty());
     }
 
     #[test]
     fn class_annotation_maps_to_table() {
-        let diagnostics = run_type_check(
+        let result = run_type_check(
             r#"
             ---@class Person
             ---@type Person
@@ -1429,12 +1578,12 @@ mod tests {
             "#,
         );
 
-        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+        assert!(result.diagnostics.is_empty());
     }
 
     #[test]
     fn enum_annotation_treated_as_string() {
-        let diagnostics = run_type_check(
+        let result = run_type_check(
             r#"
             ---@enum Mode
             ---@field Immediate '"immediate"'
@@ -1447,6 +1596,6 @@ mod tests {
             "#,
         );
 
-        assert!(diagnostics.is_empty());
+        assert!(result.diagnostics.is_empty());
     }
 }
