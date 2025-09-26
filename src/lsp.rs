@@ -1,5 +1,6 @@
 use std::{
     collections::HashMap,
+    fs,
     path::{Path, PathBuf},
     sync::Arc,
 };
@@ -29,6 +30,9 @@ use crate::diagnostics::{Diagnostic as CheckerDiagnostic, Severity, TextRange};
 use crate::error::Result;
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
+
+use crate::typechecker::types::{AnnotationIndex, TypeRegistry};
+use crate::workspace;
 
 #[derive(Debug)]
 pub struct TypuaLanguageServer {
@@ -99,6 +103,43 @@ impl TypuaLanguageServer {
         *text = change.text;
     }
 
+    fn collect_workspace_registry(&self, current: &Path) -> TypeRegistry {
+        let mut registry = TypeRegistry::default();
+        match workspace::collect_source_files(self._root.as_path(), self._config.as_ref()) {
+            Ok(files) => {
+                for path in files {
+                    if path == current {
+                        continue;
+                    }
+
+                    match fs::read_to_string(&path) {
+                        Ok(source) => {
+                            let (_, file_registry) = AnnotationIndex::from_source(&source);
+                            registry.extend(&file_registry);
+                        }
+                        Err(error) => {
+                            event!(
+                                Level::WARN,
+                                ?path,
+                                ?error,
+                                "failed to read workspace file when collecting registry"
+                            );
+                        }
+                    }
+                }
+            }
+            Err(error) => {
+                event!(
+                    Level::WARN,
+                    ?error,
+                    "failed to collect workspace files for registry"
+                );
+            }
+        }
+
+        registry
+    }
+
     fn analyze_document(
         &self,
         uri: &Url,
@@ -107,7 +148,9 @@ impl TypuaLanguageServer {
         match full_moon::parse(text) {
             Ok(ast) => {
                 let path = uri_to_path(uri);
-                let result = checker::check_ast(&path, text, &ast);
+                let workspace_registry = self.collect_workspace_registry(path.as_path());
+                let result =
+                    checker::check_ast_with_registry(&path, text, &ast, Some(&workspace_registry));
                 let diagnostics = result
                     .diagnostics
                     .into_iter()
