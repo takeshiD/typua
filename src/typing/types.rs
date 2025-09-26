@@ -36,8 +36,14 @@ pub enum Params {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Table {
-    Record { fields: BTreeMap<String, Type>, exact: bool },
-    Map { key: Box<Type>, value: Box<Type> },
+    Record {
+        fields: BTreeMap<String, Type>,
+        exact: bool,
+    },
+    Map {
+        key: Box<Type>,
+        value: Box<Type>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -48,7 +54,10 @@ pub struct Scheme {
 
 impl Scheme {
     pub fn new(vars: impl IntoIterator<Item = TyVarId>, body: Type) -> Self {
-        Self { vars: vars.into_iter().collect(), body }
+        Self {
+            vars: vars.into_iter().collect(),
+            body,
+        }
     }
 }
 
@@ -56,8 +65,12 @@ impl Scheme {
 pub struct Subst(pub HashMap<TyVarId, Type>);
 
 impl Subst {
-    pub fn get(&self, v: &TyVarId) -> Option<&Type> { self.0.get(v) }
-    pub fn insert(&mut self, v: TyVarId, t: Type) { self.0.insert(v, t); }
+    pub fn get(&self, v: &TyVarId) -> Option<&Type> {
+        self.0.get(v)
+    }
+    pub fn insert(&mut self, v: TyVarId, t: Type) {
+        self.0.insert(v, t);
+    }
     pub fn compose(&self, other: &Subst) -> Subst {
         // self after other: S2 ∘ S1  ≡  apply S2 to S1, then merge S2
         let mut m = other.0.clone();
@@ -75,7 +88,10 @@ pub fn ftv(t: &Type) -> BTreeSet<TyVarId> {
     match t {
         Type::Prim(_) => BTreeSet::new(),
         Type::Var(v) => [*v].into_iter().collect(),
-        Type::Fun { params, returns } => ftv_params(params).into_iter().chain(ftv_params(returns)).collect(),
+        Type::Fun { params, returns } => ftv_params(params)
+            .into_iter()
+            .chain(ftv_params(returns))
+            .collect(),
         Type::Tuple(vs) => vs.iter().flat_map(ftv).collect(),
         Type::Union(us) => us.iter().flat_map(ftv).collect(),
         Type::Optional(t) => ftv(t),
@@ -122,23 +138,34 @@ pub fn apply(s: &Subst, t: Type) -> Type {
     match t {
         Type::Prim(_) => t,
         Type::Var(v) => s.0.get(&v).cloned().unwrap_or(Type::Var(v)),
-        Type::Fun { params, returns } => Type::Fun { params: apply_params(s, params), returns: apply_params(s, returns) },
+        Type::Fun { params, returns } => Type::Fun {
+            params: apply_params(s, params),
+            returns: apply_params(s, returns),
+        },
         Type::Tuple(vs) => Type::Tuple(vs.into_iter().map(|t| apply(s, t)).collect()),
         Type::Union(us) => Type::Union(us.into_iter().map(|t| apply(s, t)).collect()),
         Type::Optional(t1) => Type::Optional(Box::new(apply(s, *t1))),
         Type::Table(Table::Record { fields, exact }) => {
             let mut nf = BTreeMap::new();
-            for (k, v) in fields.into_iter() { nf.insert(k, apply(s, v)); }
+            for (k, v) in fields.into_iter() {
+                nf.insert(k, apply(s, v));
+            }
             Type::Table(Table::Record { fields: nf, exact })
         }
-        Type::Table(Table::Map { key, value }) => Type::Table(Table::Map { key: Box::new(apply(s, *key)), value: Box::new(apply(s, *value)) }),
+        Type::Table(Table::Map { key, value }) => Type::Table(Table::Map {
+            key: Box::new(apply(s, *key)),
+            value: Box::new(apply(s, *value)),
+        }),
     }
 }
 
 fn apply_params(s: &Subst, p: Params) -> Params {
     match p {
         Params::Fixed(vs) => Params::Fixed(vs.into_iter().map(|t| apply(s, t)).collect()),
-        Params::VarArg(vs, v) => Params::VarArg(vs.into_iter().map(|t| apply(s, t)).collect(), Box::new(apply(s, *v))),
+        Params::VarArg(vs, v) => Params::VarArg(
+            vs.into_iter().map(|t| apply(s, t)).collect(),
+            Box::new(apply(s, *v)),
+        ),
     }
 }
 
@@ -148,7 +175,9 @@ pub struct TypeDisplay<'a> {
 }
 
 impl<'a> TypeDisplay<'a> {
-    pub fn new(ty: &'a Type) -> Self { Self { ty } }
+    pub fn new(ty: &'a Type) -> Self {
+        Self { ty }
+    }
 }
 
 impl fmt::Display for TypeDisplay<'_> {
@@ -156,52 +185,144 @@ impl fmt::Display for TypeDisplay<'_> {
         let mut names: HashMap<TyVarId, String> = HashMap::new();
         let mut next = 0usize;
         fn name_for(names: &mut HashMap<TyVarId, String>, next: &mut usize, v: TyVarId) -> String {
-            if let Some(n) = names.get(&v) { return n.clone(); }
-            let s = ["T","U","V","W","X","Y","Z"][*next % 7].to_string() + &"'".repeat(*next / 7);
+            if let Some(n) = names.get(&v) {
+                return n.clone();
+            }
+            let s =
+                ["T", "U", "V", "W", "X", "Y", "Z"][*next % 7].to_string() + &"'".repeat(*next / 7);
             *next += 1;
             names.insert(v, s.clone());
             s
         }
-        fn go(f: &mut fmt::Formatter<'_>, t: &Type, names: &mut HashMap<TyVarId, String>, next: &mut usize) -> fmt::Result {
+        fn go(
+            f: &mut fmt::Formatter<'_>,
+            t: &Type,
+            names: &mut HashMap<TyVarId, String>,
+            next: &mut usize,
+        ) -> fmt::Result {
             match t {
-                Type::Prim(p) => write!(f, "{}", match p {
-                    Prim::Nil => "nil",
-                    Prim::Any => "any",
-                    Prim::Boolean => "boolean",
-                    Prim::Number => "number",
-                    Prim::Integer => "integer",
-                    Prim::String => "string",
-                    Prim::Thread => "thread",
-                    Prim::UserData => "userdata",
-                    Prim::LightUserData => "lightuserdata",
-                }),
+                Type::Prim(p) => write!(
+                    f,
+                    "{}",
+                    match p {
+                        Prim::Nil => "nil",
+                        Prim::Any => "any",
+                        Prim::Boolean => "boolean",
+                        Prim::Number => "number",
+                        Prim::Integer => "integer",
+                        Prim::String => "string",
+                        Prim::Thread => "thread",
+                        Prim::UserData => "userdata",
+                        Prim::LightUserData => "lightuserdata",
+                    }
+                ),
                 Type::Var(v) => write!(f, "{}", name_for(names, next, *v)),
-                Type::Optional(t1) => { go(f, t1, names, next)?; write!(f, "?") },
+                Type::Optional(t1) => {
+                    go(f, t1, names, next)?;
+                    write!(f, "?")
+                }
                 Type::Tuple(vs) => {
-                    write!(f, "[")?; for (i, t) in vs.iter().enumerate() { if i>0 { write!(f, ", ")?; } go(f, t, names, next)?; } write!(f, "]")
+                    write!(f, "[")?;
+                    for (i, t) in vs.iter().enumerate() {
+                        if i > 0 {
+                            write!(f, ", ")?;
+                        }
+                        go(f, t, names, next)?;
+                    }
+                    write!(f, "]")
                 }
                 Type::Union(us) => {
-                    for (i, t) in us.iter().enumerate() { if i>0 { write!(f, " | ")?; } go(f, t, names, next)?; }
+                    for (i, t) in us.iter().enumerate() {
+                        if i > 0 {
+                            write!(f, " | ")?;
+                        }
+                        go(f, t, names, next)?;
+                    }
                     Ok(())
                 }
                 Type::Fun { params, returns } => {
                     write!(f, "fun(")?;
                     match params {
-                        Params::Fixed(vs) => { for (i,t) in vs.iter().enumerate() { if i>0 { write!(f, ", ")?; } go(f,t,names,next)?; } }
-                        Params::VarArg(vs, v) => { for (i,t) in vs.iter().enumerate() { if i>0 { write!(f, ", ")?; } go(f,t,names,next)?; } if !vs.is_empty() { write!(f, ", ")?; } go(f,v,names,next)?; write!(f, "...")?; }
+                        Params::Fixed(vs) => {
+                            for (i, t) in vs.iter().enumerate() {
+                                if i > 0 {
+                                    write!(f, ", ")?;
+                                }
+                                go(f, t, names, next)?;
+                            }
+                        }
+                        Params::VarArg(vs, v) => {
+                            for (i, t) in vs.iter().enumerate() {
+                                if i > 0 {
+                                    write!(f, ", ")?;
+                                }
+                                go(f, t, names, next)?;
+                            }
+                            if !vs.is_empty() {
+                                write!(f, ", ")?;
+                            }
+                            go(f, v, names, next)?;
+                            write!(f, "...")?;
+                        }
                     }
                     write!(f, ")")?;
                     match returns {
-                        Params::Fixed(vs) if !vs.is_empty() => { write!(f, ": ")?; if vs.len()==1 { go(f, &vs[0], names, next) } else { write!(f, "(")?; for (i,t) in vs.iter().enumerate() { if i>0 { write!(f, ", ")?; } go(f,t,names,next)?; } write!(f, ")") }
+                        Params::Fixed(vs) if !vs.is_empty() => {
+                            write!(f, ": ")?;
+                            if vs.len() == 1 {
+                                go(f, &vs[0], names, next)
+                            } else {
+                                write!(f, "(")?;
+                                for (i, t) in vs.iter().enumerate() {
+                                    if i > 0 {
+                                        write!(f, ", ")?;
+                                    }
+                                    go(f, t, names, next)?;
+                                }
+                                write!(f, ")")
+                            }
                         }
-                        Params::VarArg(vs, v) => { write!(f, ": (")?; for (i,t) in vs.iter().enumerate() { if i>0 { write!(f, ", ")?; } go(f,t,names,next)?; } if !vs.is_empty() { write!(f, ", ")?; } go(f,v,names,next)?; write!(f, "...)") }
-                        _ => Ok(())
+                        Params::VarArg(vs, v) => {
+                            write!(f, ": (")?;
+                            for (i, t) in vs.iter().enumerate() {
+                                if i > 0 {
+                                    write!(f, ", ")?;
+                                }
+                                go(f, t, names, next)?;
+                            }
+                            if !vs.is_empty() {
+                                write!(f, ", ")?;
+                            }
+                            go(f, v, names, next)?;
+                            write!(f, "...)")
+                        }
+                        _ => Ok(()),
                     }
                 }
                 Type::Table(Table::Record { fields, exact }) => {
-                    write!(f, "{{ ")?; let mut first = true; for (k,v) in fields.iter() { if !first { write!(f, ", ")?; } first=false; write!(f, "{}: ", k)?; go(f,v,names,next)?; } write!(f, " }}")?; if *exact { write!(f, " (exact)")?; } Ok(())
+                    write!(f, "{{ ")?;
+                    let mut first = true;
+                    for (k, v) in fields.iter() {
+                        if !first {
+                            write!(f, ", ")?;
+                        }
+                        first = false;
+                        write!(f, "{}: ", k)?;
+                        go(f, v, names, next)?;
+                    }
+                    write!(f, " }}")?;
+                    if *exact {
+                        write!(f, " (exact)")?;
+                    }
+                    Ok(())
                 }
-                Type::Table(Table::Map { key, value }) => { write!(f, "{{ [")?; go(f,key,names,next)?; write!(f, "]: ")?; go(f,value,names,next)?; write!(f, " }}") }
+                Type::Table(Table::Map { key, value }) => {
+                    write!(f, "{{ [")?;
+                    go(f, key, names, next)?;
+                    write!(f, "]: ")?;
+                    go(f, value, names, next)?;
+                    write!(f, " }}")
+                }
             }
         }
         go(f, self.ty, &mut names, &mut next)
@@ -209,7 +330,11 @@ impl fmt::Display for TypeDisplay<'_> {
 }
 
 // Helpers to build types succinctly in tests
-impl Prim { pub fn as_type(self) -> Type { Type::Prim(self) } }
+impl Prim {
+    pub fn as_type(self) -> Type {
+        Type::Prim(self)
+    }
+}
 
 pub fn union(mut items: Vec<Type>) -> Type {
     // normalize: flatten, dedup by string form, sort
@@ -237,10 +362,12 @@ mod tests {
 
     #[test]
     fn pretty_union_optional() {
-        let t = union(vec![Prim::String.as_type(), Type::Optional(Box::new(Prim::Number.as_type()))]);
+        let t = union(vec![
+            Prim::String.as_type(),
+            Type::Optional(Box::new(Prim::Number.as_type())),
+        ]);
         let s = format!("{}", TypeDisplay::new(&t));
         assert!(s.contains("string"));
         assert!(s.contains("number | nil"));
     }
 }
-

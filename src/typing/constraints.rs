@@ -1,7 +1,7 @@
 use thiserror::Error;
 
-use super::types::{apply, union, Params, Subst, Table, Type};
-use super::unify::{unify, UnifyError};
+use super::types::{Params, Subst, Table, Type, apply, union};
+use super::unify::{UnifyError, unify};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Constraint {
@@ -18,7 +18,9 @@ pub enum Constraint {
 pub struct Constraints(pub Vec<Constraint>);
 
 impl Constraints {
-    pub fn push(&mut self, c: Constraint) { self.0.push(c); }
+    pub fn push(&mut self, c: Constraint) {
+        self.0.push(c);
+    }
 }
 
 #[derive(Debug, Error)]
@@ -33,7 +35,11 @@ pub struct Solver {
 }
 
 impl Solver {
-    pub fn new() -> Self { Self { subst: Subst::default() } }
+    pub fn new() -> Self {
+        Self {
+            subst: Subst::default(),
+        }
+    }
 
     pub fn solve(mut self, mut cs: Constraints) -> Result<Subst, SolveError> {
         // 単純なワークリストで Eq と Callable を処理
@@ -44,7 +50,10 @@ impl Solver {
                     self.subst = s2;
                 }
                 Constraint::Callable(f, args, rets) => {
-                    let fun = Type::Fun { params: Params::Fixed(args), returns: Params::Fixed(rets) };
+                    let fun = Type::Fun {
+                        params: Params::Fixed(args),
+                        returns: Params::Fixed(rets),
+                    };
                     let s2 = unify(self.subst.clone(), f, fun)?;
                     self.subst = s2;
                 }
@@ -61,10 +70,20 @@ impl Solver {
                                 self.subst = s2;
                             } else {
                                 // openでもHasFieldは存在を要求する
-                                return Err(SolveError::Unify(super::unify::UnifyError::Mismatch { expected: format!("field {name} exists"), actual: "missing".into() }));
+                                return Err(SolveError::Unify(
+                                    super::unify::UnifyError::Mismatch {
+                                        expected: format!("field {name} exists"),
+                                        actual: "missing".into(),
+                                    },
+                                ));
                             }
                         }
-                        _ => return Err(SolveError::Unify(super::unify::UnifyError::Mismatch { expected: "table(record)".into(), actual: format!("{:?}", t) })),
+                        _ => {
+                            return Err(SolveError::Unify(super::unify::UnifyError::Mismatch {
+                                expected: "table(record)".into(),
+                                actual: format!("{:?}", t),
+                            }));
+                        }
                     }
                 }
                 Constraint::Index(tab, key, val) => {
@@ -76,7 +95,12 @@ impl Solver {
                             self.subst = s3;
                         }
                         // array sugar も Map(integer, T) として扱うため、他形式はエラー
-                        _ => return Err(SolveError::Unify(super::unify::UnifyError::Mismatch { expected: "table(map)".into(), actual: format!("{:?}", t) })),
+                        _ => {
+                            return Err(SolveError::Unify(super::unify::UnifyError::Mismatch {
+                                expected: "table(map)".into(),
+                                actual: format!("{:?}", t),
+                            }));
+                        }
                     }
                 }
             }

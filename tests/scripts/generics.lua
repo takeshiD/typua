@@ -1,6 +1,6 @@
 ---@generic T
 ---@param x T
----@return fun(): T
+---@return fun(): fun(): T
 local function const(x)
     return function()
         return x
