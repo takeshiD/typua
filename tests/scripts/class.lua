@@ -25,3 +25,25 @@ local p3d = {}
 p3d.x = 1
 p3d.y = 2
 p3d.z = 2
+
+
+---@class (exact) Stack
+---@field _stack number[]
+---@field new fun(): Stack
+---@field pop fun(self): number
+---@field push fun(self, val: number)
+local Stack = {}
+Stack.__index = Stack
+
+function Stack.new()
+    local obj = {_stack = {}}
+    return setmetatable(obj, {__index = Stack})
+end
+
+function Stack:pop()
+    return table.remove(self._stack)
+end
+
+function Stack:push(val)
+    return table.insert(self._stack, val)
+end
