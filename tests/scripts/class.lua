@@ -26,9 +26,8 @@ p3d.x = 1
 p3d.y = 2
 p3d.z = 2
 
-
 ---@class (exact) Stack
----@field _stack number[]
+---@field private _stack number[]
 ---@field new fun(): Stack
 ---@field pop fun(self): number
 ---@field push fun(self, val: number)
