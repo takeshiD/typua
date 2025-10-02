@@ -9,3 +9,10 @@ local p = {}
 
 ---@type Point
 local p2 = {}
+
+---@type number?
+local z = 12
+
+if z ~= nil then
+    local zz = z
+end

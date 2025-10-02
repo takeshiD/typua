@@ -713,7 +713,6 @@ mod tests {
         "#;
         let ast = parse(source.unindent().as_str()).expect("parse failure");
         let (index, _) = AnnotationIndex::from_ast(&ast, source);
-        println!("{:#?}", index);
         let class_ann = index
             .class_hints
             .get(&4)
