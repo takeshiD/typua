@@ -134,6 +134,18 @@ struct VariableEntry {
     annotated: bool,
 }
 
+#[derive(Clone, Default)]
+struct ConditionEffect {
+    truthy: Vec<NarrowRule>,
+    falsy: Vec<NarrowRule>,
+}
+
+#[derive(Clone)]
+enum NarrowRule {
+    RequireNil(String),
+    ExcludeNil(String),
+}
+
 impl<'a> TypeChecker<'a> {
     fn new(path: &'a Path, annotations: AnnotationIndex, type_registry: TypeRegistry) -> Self {
         Self {
@@ -174,6 +186,24 @@ impl<'a> TypeChecker<'a> {
         self.scopes.push(HashMap::new());
         f(self);
         self.scopes.pop();
+    }
+
+    fn current_scope_snapshot(&self) -> HashMap<String, VariableEntry> {
+        self.scopes.last().cloned().unwrap_or_default()
+    }
+
+    fn replace_current_scope(&mut self, scope: HashMap<String, VariableEntry>) {
+        if let Some(current) = self.scopes.last_mut() {
+            *current = scope;
+        }
+    }
+
+    fn push_scope_with(&mut self, scope: HashMap<String, VariableEntry>) {
+        self.scopes.push(scope);
+    }
+
+    fn pop_scope_map(&mut self) -> HashMap<String, VariableEntry> {
+        self.scopes.pop().unwrap_or_default()
     }
 
     fn take_line_annotations(&mut self, line: usize) -> Vec<Annotation> {
@@ -534,29 +564,71 @@ impl<'a> TypeChecker<'a> {
     }
 
     fn check_if(&mut self, if_stmt: &ast::If) {
-        self.infer_expression(if_stmt.condition());
-        self.with_new_scope(|checker| checker.check_block(if_stmt.block()));
+        let base_scope = self.current_scope_snapshot();
+        let mut branch_scopes: Vec<HashMap<String, VariableEntry>> = Vec::new();
+        let mut remaining_env = base_scope.clone();
 
+        let mut branches: Vec<(Option<&ast::Expression>, &ast::Block)> = Vec::new();
+        branches.push((Some(if_stmt.condition()), if_stmt.block()));
         if let Some(elseifs) = if_stmt.else_if() {
             for elseif in elseifs {
-                self.infer_expression(elseif.condition());
-                self.with_new_scope(|checker| checker.check_block(elseif.block()));
+                branches.push((Some(elseif.condition()), elseif.block()));
             }
         }
-
         if let Some(block) = if_stmt.else_block() {
-            self.with_new_scope(|checker| checker.check_block(block));
+            branches.push((None, block));
         }
+
+        for (condition, block) in branches {
+            let mut branch_env = remaining_env.clone();
+            if let Some(expr) = condition {
+                self.infer_expression(expr);
+                let effect = Self::analyze_condition(expr);
+                Self::apply_narrowing(&mut branch_env, &effect.truthy);
+
+                let mut next_env = remaining_env.clone();
+                Self::apply_narrowing(&mut next_env, &effect.falsy);
+                remaining_env = next_env;
+            }
+
+            self.push_scope_with(branch_env);
+            self.check_block(block);
+            let scope_result = self.pop_scope_map();
+            branch_scopes.push(scope_result);
+        }
+
+        if if_stmt.else_block().is_none() {
+            branch_scopes.push(remaining_env);
+        }
+
+        let merged = Self::merge_branch_scopes(&base_scope, branch_scopes);
+        self.replace_current_scope(merged);
     }
 
     fn check_while(&mut self, while_stmt: &ast::While) {
         self.infer_expression(while_stmt.condition());
-        self.with_new_scope(|checker| checker.check_block(while_stmt.block()));
+        let base_scope = self.current_scope_snapshot();
+        let effect = Self::analyze_condition(while_stmt.condition());
+        let mut loop_env = base_scope.clone();
+        Self::apply_narrowing(&mut loop_env, &effect.truthy);
+
+        self.push_scope_with(loop_env);
+        self.check_block(while_stmt.block());
+        let loop_scope = self.pop_scope_map();
+
+        let merged = Self::merge_branch_scopes(&base_scope, vec![loop_scope, base_scope.clone()]);
+        self.replace_current_scope(merged);
     }
 
     fn check_repeat(&mut self, repeat_stmt: &ast::Repeat) {
-        self.with_new_scope(|checker| checker.check_block(repeat_stmt.block()));
+        let base_scope = self.current_scope_snapshot();
+        self.push_scope_with(base_scope.clone());
+        self.check_block(repeat_stmt.block());
+        let body_scope = self.pop_scope_map();
         self.infer_expression(repeat_stmt.until());
+
+        let merged = Self::merge_branch_scopes(&base_scope, vec![body_scope, base_scope.clone()]);
+        self.replace_current_scope(merged);
     }
 
     fn check_numeric_for(&mut self, numeric_for: &ast::NumericFor) {
@@ -609,6 +681,123 @@ impl<'a> TypeChecker<'a> {
                 self.assign_local(&name, token, ty, annotated_param);
             }
         }
+    }
+
+    fn analyze_condition(expr: &ast::Expression) -> ConditionEffect {
+        match expr {
+            ast::Expression::Var(_) => {
+                if let Some(name) = expression_identifier(expr) {
+                    let mut effect = ConditionEffect::default();
+                    effect.truthy.push(NarrowRule::ExcludeNil(name.clone()));
+                    effect.falsy.push(NarrowRule::RequireNil(name));
+                    effect
+                } else {
+                    ConditionEffect::default()
+                }
+            }
+            ast::Expression::UnaryOperator { unop, expression } => {
+                if matches!(unop, ast::UnOp::Not(_)) {
+                    let inner = Self::analyze_condition(expression);
+                    ConditionEffect {
+                        truthy: inner.falsy,
+                        falsy: inner.truthy,
+                    }
+                } else {
+                    ConditionEffect::default()
+                }
+            }
+            ast::Expression::BinaryOperator { lhs, binop, rhs } => {
+                let symbol = match binop.token().token_type() {
+                    TokenType::Symbol { symbol } => symbol,
+                    _ => return ConditionEffect::default(),
+                };
+                match symbol {
+                    Symbol::TwoEqual => Self::analyze_equality(lhs, rhs, true),
+                    Symbol::TildeEqual => Self::analyze_equality(lhs, rhs, false),
+                    _ => ConditionEffect::default(),
+                }
+            }
+            ast::Expression::Parentheses { expression, .. } => Self::analyze_condition(expression),
+            _ => ConditionEffect::default(),
+        }
+    }
+
+    fn analyze_equality(
+        lhs: &ast::Expression,
+        rhs: &ast::Expression,
+        is_equal: bool,
+    ) -> ConditionEffect {
+        if expression_is_nil(rhs)
+            && let Some(name) = expression_identifier(lhs)
+        {
+            return Self::build_nil_comparison(name, is_equal);
+        }
+
+        if expression_is_nil(lhs)
+            && let Some(name) = expression_identifier(rhs)
+        {
+            return Self::build_nil_comparison(name, is_equal);
+        }
+
+        ConditionEffect::default()
+    }
+
+    fn build_nil_comparison(name: String, is_equal: bool) -> ConditionEffect {
+        let mut effect = ConditionEffect::default();
+        if is_equal {
+            effect.truthy.push(NarrowRule::RequireNil(name.clone()));
+            effect.falsy.push(NarrowRule::ExcludeNil(name));
+        } else {
+            effect.truthy.push(NarrowRule::ExcludeNil(name.clone()));
+            effect.falsy.push(NarrowRule::RequireNil(name));
+        }
+        effect
+    }
+
+    fn apply_narrowing(scope: &mut HashMap<String, VariableEntry>, rules: &[NarrowRule]) {
+        for rule in rules {
+            match rule {
+                NarrowRule::RequireNil(name) => {
+                    if let Some(entry) = scope.get_mut(name) {
+                        entry.ty = type_only_nil(&entry.ty);
+                    }
+                }
+                NarrowRule::ExcludeNil(name) => {
+                    if let Some(entry) = scope.get_mut(name) {
+                        entry.ty = type_without_nil(&entry.ty);
+                    }
+                }
+            }
+        }
+    }
+
+    fn merge_branch_scopes(
+        base: &HashMap<String, VariableEntry>,
+        branches: Vec<HashMap<String, VariableEntry>>,
+    ) -> HashMap<String, VariableEntry> {
+        let mut merged = base.clone();
+        for key in base.keys() {
+            let mut ty: Option<TypeKind> = None;
+            let mut annotated = base.get(key).map(|entry| entry.annotated).unwrap_or(false);
+
+            for branch in &branches {
+                if let Some(entry) = branch.get(key) {
+                    annotated |= entry.annotated;
+                    ty = Some(match ty {
+                        None => entry.ty.clone(),
+                        Some(ref acc) => union_type(acc, &entry.ty),
+                    });
+                }
+            }
+
+            if let Some(entry) = merged.get_mut(key) {
+                if let Some(new_ty) = ty {
+                    entry.ty = new_ty;
+                }
+                entry.annotated |= annotated;
+            }
+        }
+        merged
     }
 
     fn assign_local(&mut self, name: &str, token: &TokenReference, ty: TypeKind, annotated: bool) {
@@ -915,6 +1104,101 @@ fn extract_field_assignment(var: &ast::Var) -> Option<(&TokenReference, &TokenRe
     None
 }
 
+fn expression_identifier(expr: &ast::Expression) -> Option<String> {
+    match expr {
+        ast::Expression::Var(ast::Var::Name(token)) => token_identifier(token),
+        ast::Expression::Parentheses { expression, .. } => expression_identifier(expression),
+        _ => None,
+    }
+}
+
+fn expression_is_nil(expr: &ast::Expression) -> bool {
+    match expr {
+        ast::Expression::Symbol(token) => matches!(
+            token.token().token_type(),
+            TokenType::Symbol {
+                symbol: Symbol::Nil
+            }
+        ),
+        ast::Expression::Parentheses { expression, .. } => expression_is_nil(expression),
+        _ => false,
+    }
+}
+
+fn type_only_nil(ty: &TypeKind) -> TypeKind {
+    if contains_nil(ty) {
+        TypeKind::Nil
+    } else {
+        TypeKind::Unknown
+    }
+}
+
+fn type_without_nil(ty: &TypeKind) -> TypeKind {
+    match ty {
+        TypeKind::Nil => TypeKind::Unknown,
+        TypeKind::Union(items) => {
+            let mut kept = Vec::new();
+            for item in items {
+                if matches!(item, TypeKind::Nil) {
+                    continue;
+                }
+                let filtered = type_without_nil(item);
+                if !matches!(filtered, TypeKind::Unknown) {
+                    flatten_union(&filtered, &mut kept);
+                }
+            }
+            build_union(kept)
+        }
+        _ => ty.clone(),
+    }
+}
+
+fn union_type(a: &TypeKind, b: &TypeKind) -> TypeKind {
+    if matches!(a, TypeKind::Unknown) || matches!(b, TypeKind::Unknown) {
+        return TypeKind::Unknown;
+    }
+    if a == b {
+        return a.clone();
+    }
+    let mut items = Vec::new();
+    flatten_union(a, &mut items);
+    flatten_union(b, &mut items);
+    build_union(items)
+}
+
+fn contains_nil(ty: &TypeKind) -> bool {
+    match ty {
+        TypeKind::Nil => true,
+        TypeKind::Union(items) => items.iter().any(contains_nil),
+        _ => false,
+    }
+}
+
+fn flatten_union(ty: &TypeKind, out: &mut Vec<TypeKind>) {
+    match ty {
+        TypeKind::Union(items) => {
+            for item in items {
+                flatten_union(item, out);
+            }
+        }
+        other => {
+            if !out.iter().any(|existing| existing == other) {
+                out.push(other.clone());
+            }
+        }
+    }
+}
+
+fn build_union(mut items: Vec<TypeKind>) -> TypeKind {
+    if items.is_empty() {
+        TypeKind::Unknown
+    } else if items.len() == 1 {
+        items.pop().unwrap()
+    } else {
+        TypeKind::Union(items)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::super::annotation::{make_union, parse_annotation};
@@ -1076,6 +1360,29 @@ mod tests {
             "#,
         );
         assert!(result.diagnostics.is_empty());
+    }
+
+    #[test]
+    fn narrowing_excludes_nil_in_truthy_branch() {
+        let source = r#"
+            ---@type number|nil
+            local value = nil
+            value = 1
+            if value ~= nil then
+            value = value
+            end
+        "#
+        .unindent();
+
+        let result = run_type_check(source.as_str());
+        assert!(result.diagnostics.is_empty());
+
+        let position = DocumentPosition { row: 5, col: 1 };
+        let info = result
+            .type_map
+            .get(&position)
+            .expect("type info for narrowed assignment");
+        assert_eq!(info.ty, "number");
     }
 
     #[test]
