@@ -177,7 +177,7 @@ impl ClassInfo {
     }
 }
 
-#[derive(Default, Clone)]
+#[derive(Debug, Default, Clone)]
 pub struct TypeRegistry {
     pub classes: HashMap<String, ClassInfo>,
     pub enums: HashMap<String, ()>,
@@ -280,7 +280,7 @@ pub struct Annotation {
     pub ty: AnnotatedType,
 }
 
-#[derive(Default, Clone)]
+#[derive(Debug, Default, Clone)]
 pub struct AnnotationIndex {
     pub by_line: HashMap<usize, Vec<Annotation>>,
     pub class_hints: HashMap<usize, Vec<String>>,

@@ -1,17 +1,23 @@
 use full_moon::ast;
-use std::collections::HashMap;
+use std::{borrow::Cow, collections::HashMap};
 
 use super::types::{
     AnnotatedType, Annotation, AnnotationIndex, AnnotationUsage, ClassDeclaration, FunctionParam,
     FunctionType, TypeKind, TypeRegistry,
 };
 
+use full_moon::tokenizer::{Lexer, LexerResult, Token, TokenType};
+
 impl AnnotationIndex {
     pub fn from_ast(ast: &ast::Ast, source: &str) -> (Self, TypeRegistry) {
-        // 現段階ではfrom_sourceの行ベース抽出と同一の挙動で安定性を優先する。
-        // 将来的にfull_moonのトリビアから厳密にコメントを収集する実装へ差し替える。
-        let _ = ast; // 将来利用のためプレースホルダ
-        Self::from_source(source)
+        let _ = ast;
+        let lexer = Lexer::new(source, ast::LuaVersion::new());
+        let tokens = match lexer.collect() {
+            LexerResult::Ok(tokens) | LexerResult::Recovered(tokens, _) => tokens,
+            LexerResult::Fatal(_) => return Self::from_source(source),
+        };
+
+        build_index_from_tokens(tokens, source)
     }
     pub fn from_source(source: &str) -> (Self, TypeRegistry) {
         let mut by_line: HashMap<usize, Vec<Annotation>> = HashMap::new();
@@ -76,6 +82,109 @@ impl AnnotationIndex {
             },
             registry,
         )
+    }
+}
+
+fn build_index_from_tokens(tokens: Vec<Token>, source: &str) -> (AnnotationIndex, TypeRegistry) {
+    let mut by_line: HashMap<usize, Vec<Annotation>> = HashMap::new();
+    let mut class_hints: HashMap<usize, Vec<String>> = HashMap::new();
+    let mut pending_annotations: Vec<Annotation> = Vec::new();
+    let mut pending_classes: Vec<String> = Vec::new();
+    let mut registry = TypeRegistry::default();
+    let mut current_class: Option<String> = None;
+    let lines: Vec<&str> = source.lines().collect();
+
+    for token in tokens {
+        if let TokenType::SingleLineComment { comment } = token.token_type() {
+            let line = token.start_position().line();
+            if line == 0 || !is_annotation_leading(&lines, line, token.start_position().character())
+            {
+                continue;
+            }
+
+            let trimmed = comment.as_str().trim_start();
+            let normalized: Cow<'_, str> = if trimmed.starts_with('-') {
+                Cow::Owned(format!("--{trimmed}"))
+            } else {
+                Cow::Borrowed(trimmed)
+            };
+
+            if let Some(decl) = parse_class_declaration(&normalized) {
+                pending_classes.push(decl.name.clone());
+                current_class = Some(decl.name.clone());
+                registry.register_class(decl);
+                continue;
+            }
+
+            if let Some(name) = parse_enum_declaration(&normalized) {
+                registry.register_enum(&name);
+                current_class = None;
+                pending_classes.clear();
+                continue;
+            }
+
+            if let Some((field_name, field_ty)) = parse_field_declaration(&normalized) {
+                if let Some(class_name) = current_class.clone() {
+                    registry.register_field(&class_name, &field_name, field_ty);
+                }
+                continue;
+            }
+
+            if let Some(annotation) = parse_annotation(&normalized) {
+                pending_annotations.push(annotation);
+            }
+
+            continue;
+        }
+
+        if matches!(token.token_type(), TokenType::Eof) {
+            break;
+        }
+
+        if token.token_type().is_trivia() {
+            continue;
+        }
+
+        let line = token.start_position().line();
+        if line == 0 {
+            continue;
+        }
+
+        if !pending_classes.is_empty() {
+            class_hints
+                .entry(line)
+                .or_default()
+                .append(&mut pending_classes);
+        }
+        current_class = None;
+
+        if !pending_annotations.is_empty() {
+            by_line
+                .entry(line)
+                .or_default()
+                .append(&mut pending_annotations);
+        }
+    }
+
+    (
+        AnnotationIndex {
+            by_line,
+            class_hints,
+        },
+        registry,
+    )
+}
+
+fn is_annotation_leading(lines: &[&str], line: usize, column: usize) -> bool {
+    if line == 0 {
+        return false;
+    }
+    match lines.get(line.saturating_sub(1)) {
+        Some(text) => text
+            .chars()
+            .take(column.saturating_sub(1))
+            .all(char::is_whitespace),
+        None => true,
     }
 }
 
@@ -426,7 +535,9 @@ pub(crate) fn parse_field_declaration(line: &str) -> Option<(String, AnnotatedTy
 #[cfg(test)]
 mod tests {
     use super::*;
+    use full_moon::parse;
     use pretty_assertions::assert_eq;
+    use unindent::Unindent;
 
     #[test]
     fn annotation_type_parsing() {
@@ -526,5 +637,95 @@ mod tests {
             }
             _ => panic!("expected tuple applied type"),
         }
+    }
+
+    #[test]
+    fn from_ast_collects_annotations_with_padding() {
+        let source = r#"
+        ---@type number
+        -- keep
+
+        local value = 42
+        "#;
+        let ast = parse(source.unindent().as_str()).expect("parse failure");
+        let (index, _) = AnnotationIndex::from_ast(&ast, source);
+        let annotations = index.by_line.get(&5).expect("annotation attached");
+        assert_eq!(annotations.len(), 1);
+        assert_eq!(annotations[0].usage, AnnotationUsage::Type);
+        assert_eq!(annotations[0].ty.raw, "number");
+    }
+
+    #[test]
+    fn from_ast_registers_classes_without_statements() {
+        let source = r#"
+        ---@class Foo
+        ---@field bar string
+        "#;
+        let ast = parse(source.unindent().as_str()).expect("parse failure");
+        let (index, registry) = AnnotationIndex::from_ast(&ast, source);
+        assert!(index.by_line.is_empty());
+        assert!(index.class_hints.is_empty());
+        assert!(registry.resolve("Foo").is_some());
+        let field = registry
+            .field_annotation("Foo", "bar")
+            .expect("field registered");
+        assert_eq!(field.raw, "string");
+    }
+
+    #[test]
+    fn from_ast_ignores_inline_annotation_comments() {
+        let source = r#"
+        local ignored = 0 ---@type string
+        local actual = 1
+        "#;
+        let ast = parse(source.unindent().as_str()).expect("parse failure");
+        let (index, _) = AnnotationIndex::from_ast(&ast, source);
+        assert!(!index.by_line.contains_key(&1));
+        assert!(!index.by_line.contains_key(&2));
+    }
+
+    #[test]
+    fn from_ast_attaches_block_type_annotations_to_statement() {
+        let source = r#"
+        ---@type number
+        local value = 0
+        "#;
+        let ast = parse(source.unindent().as_str()).expect("parse failure");
+        let (index, _) = AnnotationIndex::from_ast(&ast, source);
+        let annotations = index
+            .by_line
+            .get(&3)
+            .expect("annotation attached to statement");
+        assert_eq!(annotations.len(), 1);
+        assert_eq!(annotations[0].usage, AnnotationUsage::Type);
+        assert_eq!(annotations[0].ty.raw, "number");
+    }
+
+    #[test]
+    fn from_ast_attaches_block_class_annotations_to_statement() {
+        let source = r#"
+        ---@class Foo
+        ---@field bar string
+        local f1 = {}
+
+        ---@type Foo
+        local f2 = {}
+        "#;
+        let ast = parse(source.unindent().as_str()).expect("parse failure");
+        let (index, _) = AnnotationIndex::from_ast(&ast, source);
+        println!("{:#?}", index);
+        let class_ann = index
+            .class_hints
+            .get(&4)
+            .expect("annotation attached to statement");
+        assert_eq!(class_ann.len(), 1);
+        assert_eq!(class_ann[0], "Foo");
+
+        let line_ann = index
+            .by_line
+            .get(&7)
+            .expect("annotation attached to statement");
+        assert_eq!(line_ann[0].usage, AnnotationUsage::Type);
+        assert_eq!(line_ann[0].ty.raw, "Foo");
     }
 }

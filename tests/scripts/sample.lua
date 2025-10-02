@@ -2,5 +2,10 @@
 local x = 1
 x = "oops"
 
----@type Poin
+
+---@class Point
+---@field x number
 local p = {}
+
+---@type Point
+local p2 = {}
