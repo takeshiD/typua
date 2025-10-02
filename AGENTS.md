@@ -4,13 +4,13 @@
 以下は型チェッカーの仕様と実装に際しての諸注意を記載します。
 
 # Type Annotations
-- Lua Language Server annotations use `---@` comments and support primitives, arrays, tuples, functions, unions, generics, and optional types.citeturn1search0turn3open3
+- Lua Language Server annotations use `---@` comments and support primitives, arrays, tuples, functions, unions, generics, and optional types.
 
 ## Canonical Type Names
-`nil`, `any`, `boolean`, `string`, `number`, `integer`, `function`, `table`, `thread`, `userdata`, `lightuserdata`.citeturn3open3
+`nil`, `any`, `boolean`, `string`, `number`, `integer`, `function`, `table`, `thread`, `userdata`, `lightuserdata`.
 
 ## Type Forms
-- Arrays: `Type[]`; dictionaries: `{ [KeyType]: ValueType }`; generics: `table<KeyType, ValueType>`; tuples: `[TypeA, TypeB]`; optionals: `Type?`; varargs: `Type...`; function signatures: `fun(param: Type): Return`.citeturn3open3
+- Arrays: `Type[]`; dictionaries: `{ [KeyType]: ValueType }`; generics: `table<KeyType, ValueType>`; tuples: `[TypeA, TypeB]`; optionals: `Type?`; varargs: `Type...`; function signatures: `fun(param: Type): Return`.
 
 ## Annotation Reference (Lua Language Server)
 | Annotation                                  | Purpose / Key Syntax                                                            |
@@ -41,7 +41,7 @@
 Annotation reference derived from the Lua Language Server annotations guide.citeturn1search0turn3open0turn3open1turn3open2
 
 ## Additional Helpers
-- Use `--[[@as Type]]` or `--[=[@as Type]=]` to coerce the inferred type of an expression inline.citeturn3open1
+- Use `--[[@as Type]]` or `--[=[@as Type]=]` to coerce the inferred type of an expression inline.
 - Build literal enumerations with chained `---| 'value'` lines or `---@alias Name 'v1'|'v2'`; prefer `---@enum` for tables with documented fields.citeturn3open1
 - Scope enforcement comes from combining `---@class (exact)` with `---@private`, `---@protected`, or `---@package`.citeturn3open2
 - Annotations support Markdown formatting (headings, bold, code blocks) and paragraph breaks using `---`.citeturn3open0
@@ -158,6 +158,35 @@ require('lspconfig').typua_ls.setup{
     }
 }
 ```
+
+## Implemetation Parsing annotaion and AST
+full_moonによる解析結果を利用してTypeAnnotationを解析する。
+
+以下のフローで型解析を行う。
+
+1. full_moonによる取得されるコメントから型アノテーションを解析する
+2. full_moonによりLuaスクリプトのASTを取得する
+3. 1と2から型情報を付与したASTを生成する(TypedAST)
+4. TypedASTに対して意味解析、型解析を行い型定義情報と診断結果を出力する
+
+TypedASTは必ずスクラッチで新たに定義してfull_moonで取得されるstructから変換するようにしてください。
+これは後にsalsaによってインクリメンタル解析が出来るようにする余地を残すためです。
+
+# Implementation Status
+TODO.mdを作成して実装の進捗情報を詳細に記載してください。
+チェックリスト方式にして機能単位で記入してください。
+
+# Unit Testing
+機能を実装する際には必ず仕様を満たしていることを確認出来る単体テストを作成してください。
+
+特に型アノテーションの解析は細かく、あらゆるパターンを想定して広範囲にテストを作成してください。
+
+型検査のテストは必ず次のテストをしてください。
+
+- diagnosticsの結果が期待された結果になっていること
+- 型定義シンボルが期待された結果になっていること
+- 単体のソースコードに対してと、複数のソースコード(ワークスペース)に対してのテストを含めること
+
 
 # Repository Guidelines
 

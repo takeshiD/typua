@@ -11,7 +11,7 @@ use full_moon::{
     tokenizer::{Position, Symbol, TokenReference, TokenType},
 };
 
-use crate::typing::{infer::expr as infer_expr, types as tty};
+// use crate::typing::{infer::expr as infer_expr, types as tty};
 use crate::{
     cli::CheckOptions,
     diagnostics::{Diagnostic, DiagnosticCode, TextPosition, TextRange},
@@ -748,7 +748,7 @@ impl<'a> TypeChecker<'a> {
                 self.infer_binary(lhs, binop, rhs)
             }
             ast::Expression::FunctionCall(call) => {
-                self.try_record_function_call_type(call);
+                // self.try_record_function_call_type(call);
                 TypeKind::Unknown
             }
             ast::Expression::Var(var) => self.infer_var(var),
@@ -872,28 +872,6 @@ impl<'a> TypeChecker<'a> {
 
     fn path_buf(&self) -> PathBuf {
         self.path.to_path_buf()
-    }
-
-    fn try_record_function_call_type(&mut self, call: &ast::FunctionCall) {
-        // Only simple name calls for now to place the hover position
-        let name_token = match call.prefix() {
-            ast::Prefix::Name(n) => n,
-            _ => return,
-        };
-
-        // Collect argument types from current heuristic inference and convert
-        let mut args_typing: Vec<tty::Type> = Vec::new();
-        // Note: full_moon API differences across versions; for now, skip reading args
-        // and proceed with zero-arg inference to avoid API coupling.
-
-        let mut next = 0u32;
-        let callee = tty::Type::Var(tty::TyVarId({
-            next += 1;
-            next - 1
-        }));
-        if let Ok((_ret, _)) = infer_expr::infer_call_return(callee, args_typing) {
-            // Intentionally not recording to avoid interfering with existing diagnostics yet.
-        }
     }
 }
 

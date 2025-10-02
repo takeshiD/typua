@@ -37,7 +37,7 @@ use crate::workspace;
 #[derive(Debug)]
 pub struct TypuaLanguageServer {
     client: Client,
-    _root: PathBuf,
+    _root: RwLock<PathBuf>,
     _config: Arc<crate::config::Config>,
     documents: RwLock<HashMap<Url, DocumentState>>,
 }
@@ -58,14 +58,14 @@ impl TypuaLanguageServer {
     pub fn new(client: Client, options: LspOptions) -> Self {
         Self {
             client,
-            _root: options.root,
+            _root: RwLock::new(PathBuf::new()),
             _config: Arc::new(options.config),
             documents: RwLock::new(HashMap::new()),
         }
     }
 
     async fn update_document(&self, uri: Url, text: String) {
-        let (diagnostics, types) = self.analyze_document(&uri, &text);
+        let (diagnostics, types) = self.analyze_document(&uri, &text).await;
 
         {
             let mut documents = self.documents.write().await;
@@ -103,15 +103,15 @@ impl TypuaLanguageServer {
         *text = change.text;
     }
 
-    fn collect_workspace_registry(&self, current: &Path) -> TypeRegistry {
+    async fn collect_workspace_registry(&self, current: &Path) -> TypeRegistry {
         let mut registry = TypeRegistry::default();
-        match workspace::collect_source_files(self._root.as_path(), self._config.as_ref()) {
+        let root = self._root.read().await;
+        match workspace::collect_source_files(&root, self._config.as_ref()) {
             Ok(files) => {
                 for path in files {
                     if path == current {
                         continue;
                     }
-
                     match fs::read_to_string(&path) {
                         Ok(source) => {
                             let (_, file_registry) = AnnotationIndex::from_source(&source);
@@ -136,11 +136,10 @@ impl TypuaLanguageServer {
                 );
             }
         }
-
         registry
     }
 
-    fn analyze_document(
+    async fn analyze_document(
         &self,
         uri: &Url,
         text: &str,
@@ -148,7 +147,7 @@ impl TypuaLanguageServer {
         match full_moon::parse(text) {
             Ok(ast) => {
                 let path = uri_to_path(uri);
-                let workspace_registry = self.collect_workspace_registry(path.as_path());
+                let workspace_registry = self.collect_workspace_registry(path.as_path()).await;
                 let result =
                     checker::check_ast_with_registry(&path, text, &ast, Some(&workspace_registry));
                 let diagnostics = result
@@ -168,7 +167,7 @@ impl TypuaLanguageServer {
 
 #[async_trait]
 impl LanguageServer for TypuaLanguageServer {
-    async fn initialize(&self, _: InitializeParams) -> LspResult<InitializeResult> {
+    async fn initialize(&self, params: InitializeParams) -> LspResult<InitializeResult> {
         let text_document_sync = TextDocumentSyncCapability::Options(TextDocumentSyncOptions {
             open_close: Some(true),
             change: Some(TextDocumentSyncKind::FULL),
@@ -176,7 +175,13 @@ impl LanguageServer for TypuaLanguageServer {
             will_save_wait_until: Some(false),
             save: None,
         });
-
+        if let Some(workspace_root) = params.workspace_folders
+            && !workspace_root.is_empty()
+            && let Some(ws) = workspace_root.first()
+        {
+            let mut root = self._root.write().await;
+            *root = PathBuf::from(ws.uri.as_str());
+        }
         Ok(InitializeResult {
             server_info: Some(ServerInfo {
                 name: "typua".to_string(),

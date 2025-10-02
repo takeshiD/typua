@@ -9,7 +9,37 @@
 - 🚀 Blazing Fast Typecheck
 - 💾 Low memory usage
 - 🖥️ Language Server Support
- 
+
+## Status
+- **Type declaration**
+    - [x] builtin-type(nil, number, string, boolean, function, table)
+    - [ ] compound-type(union, array, tuple, dictionary, key-value table)
+    - [ ] class
+    - [ ] enum
+    - [ ] generic function
+    - [ ] generic class and method
+- **Type check**
+    - [ ] assign-type-mismatch
+    - [ ] return-type-mismatch
+    - [ ] param-type-mismatch
+    - [ ] field-type-mismatch
+    - [ ] table-shape-mismatch
+- **Suppert Lua Version**
+    - [x] Lua51
+    - [ ] Lua52
+    - [ ] Lua53
+    - [ ] Lua54
+    - [ ] LuaJIT
+- **performance**
+    - Reducing check time
+        - [x] Step1: Every time a file is changed or opened, the AST of the file is fully analyzed.
+        - [ ] Step2: Every time a file is changed or opened, Incremental analyzing only the changes.
+- **LSP Support**
+    - [x] Diagnostics
+    - [x] Inlay hints
+    - [x] Hover
+    - [ ] References
+    - [ ] Goto Type Defenition
 
 # Install
 
@@ -103,4 +133,5 @@ include = [
     "/usr/share/lua/5.3/*/init.lua",
 ]
 ```
+
 
