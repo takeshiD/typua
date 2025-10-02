@@ -240,10 +240,7 @@ impl TypeRegistry {
 
     pub fn extend(&mut self, other: &TypeRegistry) {
         for (name, info) in &other.classes {
-            let entry = self
-                .classes
-                .entry(name.clone())
-                .or_insert_with(ClassInfo::default);
+            let entry = self.classes.entry(name.clone()).or_default();
             entry.exact = info.exact;
             entry.parent = info.parent.clone();
             for (field, ty) in &info.fields {

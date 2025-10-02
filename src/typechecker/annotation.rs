@@ -1,11 +1,18 @@
+use full_moon::ast;
 use std::collections::HashMap;
 
 use super::types::{
-    AnnotatedType, Annotation, AnnotationIndex, AnnotationUsage, ClassDeclaration, TypeKind,
-    TypeRegistry,
+    AnnotatedType, Annotation, AnnotationIndex, AnnotationUsage, ClassDeclaration, FunctionParam,
+    FunctionType, TypeKind, TypeRegistry,
 };
 
 impl AnnotationIndex {
+    pub fn from_ast(ast: &ast::Ast, source: &str) -> (Self, TypeRegistry) {
+        // 現段階ではfrom_sourceの行ベース抽出と同一の挙動で安定性を優先する。
+        // 将来的にfull_moonのトリビアから厳密にコメントを収集する実装へ差し替える。
+        let _ = ast; // 将来利用のためプレースホルダ
+        Self::from_source(source)
+    }
     pub fn from_source(source: &str) -> (Self, TypeRegistry) {
         let mut by_line: HashMap<usize, Vec<Annotation>> = HashMap::new();
         let mut class_hints: HashMap<usize, Vec<String>> = HashMap::new();
@@ -115,9 +122,51 @@ pub(crate) fn parse_type(raw: &str) -> Option<TypeKind> {
         return None;
     }
 
+    // Optional type sugar: Type? -> Type|nil
     if let Some(stripped) = trimmed.strip_suffix('?') {
         let base_type = parse_type(stripped.trim())?;
         return Some(make_union(vec![base_type, TypeKind::Nil]));
+    }
+
+    // Function signature: fun(<params>): <returns>
+    if trimmed.starts_with("fun(") || trimmed.starts_with("fun<") {
+        return parse_function_type(trimmed);
+    }
+
+    // Dictionary literal type: { [K]: V }
+    if trimmed.starts_with('{')
+        && trimmed.ends_with('}')
+        && let Some((k, v)) = parse_dictionary_type(trimmed)
+    {
+        return Some(TypeKind::Applied {
+            base: Box::new(TypeKind::Custom("table".to_string())),
+            args: vec![k, v],
+        });
+    }
+
+    // Tuple: [A, B, C]
+    if trimmed.starts_with('[') && trimmed.ends_with(']') && trimmed.contains(',') {
+        let inner = &trimmed[1..trimmed.len() - 1];
+        let mut members = Vec::new();
+        for part in inner.split(',').map(str::trim).filter(|p| !p.is_empty()) {
+            if let Some(t) = parse_type(part) {
+                members.push(t);
+            }
+        }
+        if !members.is_empty() {
+            return Some(TypeKind::Applied {
+                base: Box::new(TypeKind::Custom("tuple".to_string())),
+                args: members,
+            });
+        }
+    }
+
+    // Generic application: base<Arg1, Arg2, ...>
+    if let Some((base, args)) = parse_applied_type(trimmed) {
+        return Some(TypeKind::Applied {
+            base: Box::new(base),
+            args,
+        });
     }
 
     if trimmed.contains('|') {
@@ -155,6 +204,160 @@ fn parse_atomic_type(raw: &str) -> Option<TypeKind> {
         "any" => None,
         _ => Some(TypeKind::Custom(raw.to_string())),
     }
+}
+
+fn parse_applied_type(raw: &str) -> Option<(TypeKind, Vec<TypeKind>)> {
+    // base<Arg, Arg2>
+    let _chars = raw.chars();
+    let mut depth = 0usize;
+    let mut open_idx = None;
+    for (i, ch) in raw.char_indices() {
+        match ch {
+            '<' => {
+                if depth == 0 {
+                    open_idx = Some(i);
+                }
+                depth += 1;
+            }
+            '>' => {
+                if depth == 0 {
+                    return None;
+                }
+                depth -= 1;
+                if depth == 0 {
+                    // base .. <args>
+                    let base_str = raw[..open_idx?].trim();
+                    let args_str = &raw[open_idx? + 1..i];
+                    let base = TypeKind::Custom(base_str.to_string());
+                    let mut args = Vec::new();
+                    for part in args_str.split(',').map(str::trim).filter(|p| !p.is_empty()) {
+                        if let Some(t) = parse_type(part) {
+                            args.push(t);
+                        }
+                    }
+                    return Some((base, args));
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+fn parse_dictionary_type(raw: &str) -> Option<(TypeKind, TypeKind)> {
+    // very lightweight pattern matcher for: { [K]: V }
+    let s = raw
+        .trim()
+        .trim_start_matches('{')
+        .trim_end_matches('}')
+        .trim();
+    let open = s.find('[')?;
+    let close = s[open + 1..].find(']')? + open + 1;
+    let key_ty = s[open + 1..close].trim();
+    let colon = s[close + 1..].find(':')? + close + 1;
+    let val_ty = s[colon + 1..].trim();
+    Some((parse_type(key_ty)?, parse_type(val_ty)?))
+}
+
+fn parse_function_type(raw: &str) -> Option<TypeKind> {
+    // fun(a: number, b: string): boolean, string
+    // optional generics: fun<T>(...)
+    let mut rest = raw.trim_start_matches("fun");
+    // strip optional generics <...>
+    if rest.starts_with('<') {
+        let mut depth = 0usize;
+        let mut idx = 0usize;
+        for (i, ch) in rest.char_indices() {
+            match ch {
+                '<' => depth += 1,
+                '>' => {
+                    if depth == 0 {
+                        return None;
+                    }
+                    depth -= 1;
+                    if depth == 0 {
+                        idx = i + 1;
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+        rest = &rest[idx..];
+    }
+    let rest = rest.trim();
+    if !rest.starts_with('(') {
+        return None;
+    }
+    let mut depth = 0usize;
+    let mut end = 0usize;
+    for (i, ch) in rest.char_indices() {
+        match ch {
+            '(' => depth += 1,
+            ')' => {
+                if depth == 0 {
+                    return None;
+                }
+                depth -= 1;
+                if depth == 0 {
+                    end = i;
+                    break;
+                }
+            }
+            _ => {}
+        }
+    }
+    if end == 0 {
+        return None;
+    }
+    let params_str = &rest[1..end];
+    let after = rest[end + 1..].trim();
+    let mut params: Vec<FunctionParam> = Vec::new();
+    let mut vararg: Option<Box<TypeKind>> = None;
+    if !params_str.trim().is_empty() {
+        for p in params_str
+            .split(',')
+            .map(str::trim)
+            .filter(|p| !p.is_empty())
+        {
+            if let Some(t) = p.strip_suffix("...") {
+                vararg = parse_type(t.trim()).map(Box::new);
+                continue;
+            }
+            let ty = if let Some(col) = p.find(':') {
+                parse_type(p[col + 1..].trim())
+            } else {
+                parse_type(p)
+            };
+            if let Some(kind) = ty {
+                params.push(FunctionParam {
+                    name: None,
+                    ty: kind,
+                    is_self: false,
+                    is_vararg: false,
+                });
+            }
+        }
+    }
+    let mut returns: Vec<TypeKind> = Vec::new();
+    if let Some(after_ret) = after.strip_prefix(':') {
+        for r in after_ret
+            .split(',')
+            .map(str::trim)
+            .filter(|r| !r.is_empty())
+        {
+            if let Some(t) = parse_type(r) {
+                returns.push(t);
+            }
+        }
+    }
+    let ft = FunctionType {
+        generics: Vec::new(),
+        params,
+        returns,
+        vararg,
+    };
+    Some(TypeKind::FunctionSig(Box::new(ft)))
 }
 
 pub(crate) fn make_union(types: Vec<TypeKind>) -> TypeKind {
@@ -271,5 +474,57 @@ mod tests {
                 }
             }
         );
+    }
+
+    #[test]
+    fn annotation_parsing_more_types() {
+        // function type
+        let ty = parse_type("fun(a: number, b: string): boolean").unwrap();
+        match ty {
+            TypeKind::FunctionSig(ft) => {
+                assert_eq!(ft.params.len(), 2);
+                assert_eq!(ft.returns.len(), 1);
+            }
+            _ => panic!("expected function type"),
+        }
+
+        // applied generic: table<string, number>
+        let ty = parse_type("table<string, number>").unwrap();
+        match ty {
+            TypeKind::Applied { base, args } => {
+                match *base {
+                    TypeKind::Custom(ref s) if s == "table" => {}
+                    _ => panic!("base should be table"),
+                }
+                assert_eq!(args.len(), 2);
+            }
+            _ => panic!("expected applied type"),
+        }
+
+        // dictionary literal: { [string]: number }
+        let ty = parse_type("{ [string]: number }").unwrap();
+        match ty {
+            TypeKind::Applied { base, args } => {
+                match *base {
+                    TypeKind::Custom(ref s) if s == "table" => {}
+                    _ => panic!("base should be table"),
+                }
+                assert_eq!(args.len(), 2);
+            }
+            _ => panic!("expected table applied type"),
+        }
+
+        // tuple literal
+        let ty = parse_type("[number, string]").unwrap();
+        match ty {
+            TypeKind::Applied { base, args } => {
+                match *base {
+                    TypeKind::Custom(ref s) if s == "tuple" => {}
+                    _ => panic!("base should be tuple"),
+                }
+                assert_eq!(args.len(), 2);
+            }
+            _ => panic!("expected tuple applied type"),
+        }
     }
 }

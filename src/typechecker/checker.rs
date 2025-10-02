@@ -101,7 +101,7 @@ pub fn check_ast_with_registry(
     ast: &ast::Ast,
     workspace_registry: Option<&TypeRegistry>,
 ) -> CheckResult {
-    let (annotations, local_registry) = AnnotationIndex::from_source(source);
+    let (annotations, local_registry) = AnnotationIndex::from_ast(ast, source);
     let registry = if let Some(global) = workspace_registry {
         let mut combined = global.clone();
         combined.extend(&local_registry);
@@ -109,6 +109,11 @@ pub fn check_ast_with_registry(
     } else {
         local_registry
     };
+
+    // Build TypedAST for future incremental analysis pipeline.
+    // 現状の型検査はfull_moon ASTに対して行うが、
+    // 仕様に基づきTypedASTを生成しておく（将来的にこちらに切替）。
+    let _typed = crate::typechecker::typed_ast::build_typed_ast(source, ast, &annotations);
 
     TypeChecker::new(path, annotations, registry).check(ast)
 }
@@ -675,14 +680,15 @@ impl<'a> TypeChecker<'a> {
             return;
         }
 
-        if let Some(existing) = self.lookup_entry(name) {
-            if (existing.annotated || annotated) && !existing.ty.matches(ty) {
-                let message = format!(
-                    "variable '{name}' was previously inferred as type {} but is now assigned type {ty}",
-                    existing.ty
-                );
-                self.push_diagnostic(token, message, Some(DiagnosticCode::AssignTypeMismatch));
-            }
+        if let Some(existing) = self.lookup_entry(name)
+            && (existing.annotated || annotated)
+            && !existing.ty.matches(ty)
+        {
+            let message = format!(
+                "variable '{name}' was previously inferred as type {} but is now assigned type {ty}",
+                existing.ty
+            );
+            self.push_diagnostic(token, message, Some(DiagnosticCode::AssignTypeMismatch));
         }
     }
 
@@ -747,7 +753,7 @@ impl<'a> TypeChecker<'a> {
             ast::Expression::BinaryOperator { lhs, binop, rhs } => {
                 self.infer_binary(lhs, binop, rhs)
             }
-            ast::Expression::FunctionCall(call) => {
+            ast::Expression::FunctionCall(_call) => {
                 // self.try_record_function_call_type(call);
                 TypeKind::Unknown
             }

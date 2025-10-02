@@ -159,7 +159,7 @@ require('lspconfig').typua_ls.setup{
 }
 ```
 
-## Implemetation Parsing annotaion and AST
+## Implementation Parsing annotaion and AST
 full_moonによる解析結果を利用してTypeAnnotationを解析する。
 
 以下のフローで型解析を行う。
