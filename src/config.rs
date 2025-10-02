@@ -77,3 +77,69 @@ pub enum RuntimeVersion {
 pub struct WorkspaceConfig {
     pub library: Vec<String>,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    struct TestDir {
+        path: std::path::PathBuf,
+    }
+
+    impl TestDir {
+        fn new() -> Self {
+            let mut path = std::env::temp_dir();
+            let timestamp = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("time went backwards")
+                .as_nanos();
+            path.push(format!(
+                "typua-config-test-{:?}-{timestamp}",
+                std::thread::current().id()
+            ));
+            std::fs::create_dir_all(&path).expect("create temp dir");
+            Self { path }
+        }
+
+        fn path(&self) -> &std::path::Path {
+            &self.path
+        }
+    }
+
+    impl Drop for TestDir {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.path);
+        }
+    }
+
+    #[test]
+    fn load_from_dir_returns_default_when_missing() {
+        let temp = TestDir::new();
+        let config = Config::load_from_dir(temp.path()).expect("load config");
+        assert!(matches!(config.runtime.version, RuntimeVersion::Luajit));
+        assert!(config.runtime.include.is_empty());
+        assert!(config.workspace.library.is_empty());
+    }
+
+    #[test]
+    fn load_from_dir_reads_typua_toml() {
+        let temp = TestDir::new();
+        let config_path = temp.path().join(".typua.toml");
+        let mut file = std::fs::File::create(&config_path).expect("create config file");
+        writeln!(
+            file,
+            "[runtime]\nversion = \"lua53\"\ninclude = [\"src/*.lua\"]\n\n[workspace]\nlibrary = [\"/opt/lua\"]\n"
+        )
+        .expect("write config");
+
+        // Drop file handle before reading to ensure contents are flushed on all platforms.
+        drop(file);
+
+        let config = Config::load_from_dir(temp.path()).expect("load config");
+        assert!(matches!(config.runtime.version, RuntimeVersion::Lua53));
+        assert_eq!(config.runtime.include, vec!["src/*.lua".to_string()]);
+        assert_eq!(config.workspace.library, vec!["/opt/lua".to_string()]);
+    }
+}

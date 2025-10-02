@@ -269,6 +269,8 @@ impl<'a> TypeChecker<'a> {
             typed_ast::Stmt::GenericFor(generic_for) => self.check_generic_for(generic_for),
             typed_ast::Stmt::Return(ret) => self.validate_return(ret),
             typed_ast::Stmt::FunctionCall(_)
+            | typed_ast::Stmt::Label(_)
+            | typed_ast::Stmt::Goto(_)
             | typed_ast::Stmt::Break(_)
             | typed_ast::Stmt::Unknown(_) => {}
         }
@@ -1146,7 +1148,7 @@ mod tests {
     use crate::diagnostics::Severity;
     use pretty_assertions::assert_eq;
     use std::path::Path;
-    use unindent::Unindent;
+    use unindent::unindent;
 
     fn run_type_check(source: &str) -> CheckResult {
         let ast = full_moon::parse(source).expect("failed to parse test source");
@@ -1205,14 +1207,13 @@ mod tests {
     }
     #[test]
     fn local_assignment_non_annotated() {
-        let result = run_type_check(
+        let source = unindent(
             r##"
             local x = 1
             x = "oops"
-            "##
-            .unindent()
-            .as_str(),
+            "##,
         );
+        let result = run_type_check(&source);
         let actual = result
             .type_map
             .get(&DocumentPosition { row: 1, col: 7 })
@@ -1230,15 +1231,14 @@ mod tests {
 
     #[test]
     fn local_assignment_annotated() {
-        let result = run_type_check(
+        let source = unindent(
             r##"
             ---@type number
             local x = 1
             x = "oops"
-            "##
-            .unindent()
-            .as_str(),
+            "##,
         );
+        let result = run_type_check(&source);
         let actual = result
             .type_map
             .get(&DocumentPosition { row: 2, col: 7 })
@@ -1262,24 +1262,26 @@ mod tests {
 
     #[test]
     fn reports_variable_reassignment_type_conflict() {
-        let result = run_type_check(
+        let source = unindent(
             r#"
             local x = 1
             x = "oops"
             "#,
         );
+        let result = run_type_check(&source);
 
         assert!(result.diagnostics.is_empty());
     }
 
     #[test]
     fn reports_arithmetic_operand_type_mismatch() {
-        let result = run_type_check(
+        let source = unindent(
             r#"
             local a = "hello"
             local b = a + 1
             "#,
         );
+        let result = run_type_check(&source);
 
         let diagnostic = &result.diagnostics[0];
         assert_eq!(diagnostic.severity, Severity::Error);
@@ -1303,7 +1305,8 @@ mod tests {
 
     #[test]
     fn narrowing_excludes_nil_in_truthy_branch() {
-        let source = r#"
+        let source = unindent(
+            r#"
             ---@type number|nil
             local value = nil
             if value ~= nil then
@@ -1311,10 +1314,10 @@ mod tests {
             else
                 value = value
             end
-        "#
-        .unindent();
+        "#,
+        );
 
-        let result = run_type_check(source.as_str());
+        let result = run_type_check(&source);
         assert!(result.diagnostics.is_empty());
 
         let position = DocumentPosition { row: 4, col: 5 };
@@ -1334,7 +1337,8 @@ mod tests {
 
     #[test]
     fn narrowing_exclude_builting_type_in_not_equals() {
-        let source = r#"
+        let source = unindent(
+            r#"
             ---@type number|string|boolean
             local value = "hello"
             if type(value) ~= "string" then
@@ -1342,10 +1346,10 @@ mod tests {
             elseif type(value) ~= "boolean" then
                 local num = value
             end
-        "#
-        .unindent();
+        "#,
+        );
 
-        let result = run_type_check(source.as_str());
+        let result = run_type_check(&source);
         assert!(result.diagnostics.is_empty());
 
         // num_or_bool
@@ -1367,7 +1371,8 @@ mod tests {
 
     #[test]
     fn narrowing_exclude_builting_type_in_equals() {
-        let source = r#"
+        let source = unindent(
+            r#"
             ---@type number|string|boolean
             local value = "hello"
             if type(value) == "string" then
@@ -1377,10 +1382,10 @@ mod tests {
             else
                 local n = value
             end
-        "#
-        .unindent();
+        "#,
+        );
 
-        let result = run_type_check(source.as_str());
+        let result = run_type_check(&source);
         assert!(result.diagnostics.is_empty());
 
         // string
@@ -1410,12 +1415,13 @@ mod tests {
 
     #[test]
     fn mismatch_type_annotation() {
-        let result = run_type_check(
+        let source = unindent(
             r#"
             ---@type string
             local title = 10
             "#,
         );
+        let result = run_type_check(&source);
         assert_eq!(result.diagnostics.len(), 1);
         let diagnostic = &result.diagnostics[0];
         assert!(diagnostic.message.contains("annotated as type string"));
@@ -1423,7 +1429,7 @@ mod tests {
 
     #[test]
     fn param_annotation_enforces_type_in_body() {
-        let result = run_type_check(
+        let source = unindent(
             r#"
             ---@param amount number
             local function charge(amount)
@@ -1431,6 +1437,7 @@ mod tests {
             end
             "#,
         );
+        let result = run_type_check(&source);
 
         assert_eq!(result.diagnostics.len(), 1);
         let diagnostic = &result.diagnostics[0];
@@ -1443,7 +1450,7 @@ mod tests {
 
     #[test]
     fn class_field_annotations_cover_builtin_types() {
-        let result = run_type_check(
+        let source = unindent(
             r#"
             ---@class Data
             ---@field nothing nil
@@ -1467,6 +1474,7 @@ mod tests {
             data.co = coroutine.create(function() end)
             "#,
         );
+        let result = run_type_check(&source);
         assert!(result.diagnostics.is_empty());
     }
 
@@ -1515,23 +1523,25 @@ mod tests {
 
     #[test]
     fn resolves_type_annotation_from_other_file() {
-        let a_source = r##"
+        let a_source = unindent(
+            r##"
             ---@class Point
             ---@field x number
             ---@field y number
-        "##
-        .unindent();
-        let (_, registry_a) = AnnotationIndex::from_source(a_source.as_str());
+        "##,
+        );
+        let (_, registry_a) = AnnotationIndex::from_source(&a_source);
 
         let mut workspace_registry = TypeRegistry::default();
         workspace_registry.extend(&registry_a);
 
-        let b_source = r##"
+        let b_source = unindent(
+            r##"
             ---@type Point
             local p = {}
-        "##
-        .unindent();
-        let ast = full_moon::parse(b_source.as_str()).expect("failed to parse reference source");
+        "##,
+        );
+        let ast = full_moon::parse(&b_source).expect("failed to parse reference source");
         let result = check_ast_with_registry(
             Path::new("b.lua"),
             b_source.as_str(),
@@ -1549,7 +1559,7 @@ mod tests {
 
     #[test]
     fn return_annotation_detects_mismatch() {
-        let result = run_type_check(
+        let source = unindent(
             r#"
             ---@return number
             local function value()
@@ -1557,6 +1567,7 @@ mod tests {
             end
             "#,
         );
+        let result = run_type_check(&source);
 
         assert_eq!(result.diagnostics.len(), 1);
         let diagnostic = &result.diagnostics[0];
@@ -1565,7 +1576,7 @@ mod tests {
 
     #[test]
     fn return_annotation_accepts_correct_type() {
-        let result = run_type_check(
+        let source = unindent(
             r#"
             ---@return number
             local function value()
@@ -1573,33 +1584,34 @@ mod tests {
             end
             "#,
         );
+        let result = run_type_check(&source);
 
         assert!(result.diagnostics.is_empty());
     }
 
     #[test]
     fn class_annotation_maps_to_table() {
-        let result = run_type_check(
+        let source = unindent(
             r#"
             ---@class Person
             ---@type Person
             local person = {}
             "#,
         );
+        let result = run_type_check(&source);
 
         assert!(result.diagnostics.is_empty());
     }
 
     #[test]
     fn class_annotation_infers_type_for_following_local_assignment() {
-        let result = run_type_check(
+        let source = unindent(
             r##"
             ---@class Container
             local C = {}
-            "##
-            .unindent()
-            .as_str(),
+            "##,
         );
+        let result = run_type_check(&source);
 
         assert!(result.diagnostics.is_empty());
         let info = result
@@ -1611,14 +1623,13 @@ mod tests {
 
     #[test]
     fn class_annotation_infers_type_for_following_assignment() {
-        let result = run_type_check(
+        let source = unindent(
             r##"
             ---@class Container
             Container = {}
-            "##
-            .unindent()
-            .as_str(),
+            "##,
         );
+        let result = run_type_check(&source);
 
         assert!(result.diagnostics.is_empty());
         let info = result
@@ -1630,7 +1641,7 @@ mod tests {
 
     #[test]
     fn enum_annotation_treated_as_string() {
-        let result = run_type_check(
+        let source = unindent(
             r#"
             ---@enum Mode
             ---@field Immediate '"immediate"'
@@ -1642,6 +1653,7 @@ mod tests {
             end
             "#,
         );
+        let result = run_type_check(&source);
         assert!(result.diagnostics.is_empty());
     }
 }

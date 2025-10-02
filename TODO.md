@@ -21,11 +21,11 @@
 - [x] 変換の単体テスト（最小ケース）
 - [ ] full_moon AST 全網羅の変換
 - [ ] Luau/CfxLua固有バリアント（`CompoundAssignment`, `IfExpression`, `InterpolatedString`, `TypeAssertion` 等）の取扱方針を決定（実装or未対応診断）
-- [ ] Lua 5.2+/LuaJIT 構文（`Goto`, `Label`）を `Stmt` へ追加し、TypedAST で扱う
+- [x] Lua 5.2+/LuaJIT 構文（`Goto`, `Label`）を `Stmt` へ追加し、TypedAST で扱う
 - [ ] 位置情報（`TextRange`）の精度向上（全ノード）
-- [ ] `token_range` が取得できない場合のフォールバック（`Option<TextRange>` など）を導入し `(0,0)` へ落ちないようにする
-- [ ] `merge_ranges` で無効範囲を検出し子ノード範囲へ置換する仕組みを追加
-- [ ] `Identifier` 生成時に `TokenReference::basic_symbol` 起因の前後空白を補正し、Luau特有トークンでも範囲がずれないようにする
+- [x] `token_range` が取得できない場合のフォールバック（`Option<TextRange>` など）を導入し `(0,0)` へ落ちないようにする（暫定: 無効範囲を避けるガード追加）
+- [x] `merge_ranges` で無効範囲を検出し子ノード範囲へ置換する仕組みを追加
+- [x] `Identifier` 生成時に `TokenReference::basic_symbol` 起因の前後空白を補正し、Luau特有トークンでも範囲がずれないようにする
 
 ## Type Check Pipeline
 - [x] `check_ast_with_registry` で TypedAST を生成（パイプライン挿入）
@@ -36,14 +36,15 @@
 
 ## LSP/CLI/Config
 - [ ] `.typua.toml` と LSP 設定の相互運用テスト
+  - [x] `Config::load_from_dir` の単体テスト追加（基本読込ケース）
 - [ ] LSP キャパビリティと診断位置の検証（hover/signature help）
 
 ## Testing
 - [x] `annotation` のテスト拡充（関数型/辞書/タプル/ジェネリック適用）
 - [x] `typed_ast` の変換テスト（スモーク）
 - [x] `from_ast` の挙動を間接検証（既存checkerテストが全通過）
-- [ ] ワークスペース横断のTypedAST生成・参照テスト
-- [ ] 負例テスト（不正アノテーションや壊れた型式）
+- [x] ワークスペース横断のTypedAST生成・参照テスト
+- [x] 負例テスト（不正アノテーションや壊れた型式）
 - [ ] TypedAST 化した checker の新規ユニットテスト（narrowing/演算検証の追加ケース）
 - [ ] Luau/Lua52系構文を含むフィクスチャでTypedASTカバレッジと診断位置の検証を追加
 
@@ -51,6 +52,7 @@
 - [x] `cargo clippy --all-targets --all-features` の警告ゼロ
 - [x] `cargo fmt --all` の整形確認
 - [ ] CI（ビルド・テスト・fmt・clippy）
+  - [x] `docs/ci.md` に GitHub Actions 骨子を追加
 
 ## リスク/メモ
 - TypedAST 切替は段階的に実施。現状は生成のみで拘束。

@@ -32,6 +32,8 @@ pub enum Stmt {
     Do(DoStmt),
     NumericFor(NumericForStmt),
     GenericFor(GenericForStmt),
+    Goto(GotoStmt),
+    Label(LabelStmt),
     Return(ReturnStmt),
     Break(TextRange),
     Unknown(TextRange),
@@ -168,6 +170,18 @@ pub struct GenericForStmt {
     pub names: Vec<Identifier>,
     pub generators: Vec<Expr>,
     pub body: Block,
+    pub range: TextRange,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct GotoStmt {
+    pub name: Identifier,
+    pub range: TextRange,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct LabelStmt {
+    pub name: Identifier,
     pub range: TextRange,
 }
 
@@ -483,6 +497,20 @@ fn to_stmt(stmt: &ast::Stmt, annotations: &AnnotationIndex) -> Stmt {
                 range: token_range(generic_for),
             })
         }
+        ast::Stmt::Goto(goto) => {
+            let name = identifier_from_token(goto.label_name().token());
+            Stmt::Goto(GotoStmt {
+                name,
+                range: token_range(goto),
+            })
+        }
+        ast::Stmt::Label(label) => {
+            let name = identifier_from_token(label.name().token());
+            Stmt::Label(LabelStmt {
+                name,
+                range: token_range(label),
+            })
+        }
         _ => Stmt::Unknown(token_range(stmt)),
     }
 }
@@ -774,7 +802,8 @@ fn function_annotations(
 fn identifier_from_token(token: &Token) -> Identifier {
     let start = TextPosition::from(token.start_position());
     let end = TextPosition::from(token.end_position());
-    Identifier::new(token.to_string(), TextRange { start, end })
+    let name = token.to_string().trim().to_string();
+    Identifier::new(name, TextRange { start, end })
 }
 
 fn identifier_from_token_ref(token: &TokenReference) -> Identifier {
@@ -782,9 +811,14 @@ fn identifier_from_token_ref(token: &TokenReference) -> Identifier {
 }
 
 fn merge_ranges(a: TextRange, b: TextRange) -> TextRange {
-    TextRange {
-        start: min_position(a.start, b.start),
-        end: max_position(a.end, b.end),
+    match (is_valid_range(&a), is_valid_range(&b)) {
+        (true, true) => TextRange {
+            start: min_position(a.start, b.start),
+            end: max_position(a.end, b.end),
+        },
+        (true, false) => a,
+        (false, true) => b,
+        (false, false) => a,
     }
 }
 
@@ -804,14 +838,33 @@ fn max_position(a: TextPosition, b: TextPosition) -> TextPosition {
     }
 }
 
+fn is_valid_range(range: &TextRange) -> bool {
+    is_valid_position(range.start) || is_valid_position(range.end)
+}
+
+fn is_valid_position(position: TextPosition) -> bool {
+    position.line != 0 || position.character != 0
+}
+
 fn token_range<T: Node>(node: &T) -> TextRange {
     let (start, end) = (node.start_position(), node.end_position());
-    let start = start.map(Into::into).unwrap_or(TextPosition {
-        line: 0,
-        character: 0,
-    });
-    let end = end.map(Into::into).unwrap_or(start);
-    TextRange { start, end }
+    let start = start.map(Into::into);
+    let end = end.map(Into::into);
+    match (start, end) {
+        (Some(start), Some(end)) => TextRange { start, end },
+        (Some(start), None) => TextRange { start, end: start },
+        (None, Some(end)) => TextRange { start: end, end },
+        (None, None) => TextRange {
+            start: TextPosition {
+                line: 0,
+                character: 0,
+            },
+            end: TextPosition {
+                line: 0,
+                character: 0,
+            },
+        },
+    }
 }
 
 #[cfg(test)]
@@ -951,6 +1004,62 @@ mod tests {
                 .any(|stmt| matches!(stmt, Stmt::FunctionCall(_)))
         );
         assert!(matches!(program.block.stmts.last(), Some(Stmt::Return(_))));
+    }
+
+    #[test]
+    fn convert_label_and_goto_statements() {
+        let source = unindent(
+            r#"
+            ::continue::
+            sum = sum + 1
+            goto continue
+            "#,
+        );
+
+        let (ast, annotations) = parse(&source);
+        let program = build_typed_ast(&source, &ast, &annotations);
+
+        assert_eq!(program.block.stmts.len(), 3);
+        let Stmt::Label(label) = &program.block.stmts[0] else {
+            panic!("expected label statement");
+        };
+        assert_eq!(label.name.name, "continue");
+
+        let Stmt::Goto(goto) = &program.block.stmts[2] else {
+            panic!("expected goto statement");
+        };
+        assert_eq!(goto.name.name, "continue");
+    }
+
+    #[test]
+    fn merge_ranges_prefers_valid_ranges() {
+        let invalid = TextRange {
+            start: TextPosition {
+                line: 0,
+                character: 0,
+            },
+            end: TextPosition {
+                line: 0,
+                character: 0,
+            },
+        };
+        let valid = TextRange {
+            start: TextPosition {
+                line: 2,
+                character: 1,
+            },
+            end: TextPosition {
+                line: 2,
+                character: 5,
+            },
+        };
+
+        let merged = merge_ranges(invalid, valid);
+        assert_eq!(merged.start.line, 2);
+        assert_eq!(merged.end.character, 5);
+
+        let merged_reverse = merge_ranges(valid, invalid);
+        assert_eq!(merged_reverse.start.line, 2);
     }
 
     #[test]

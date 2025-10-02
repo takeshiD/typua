@@ -103,3 +103,106 @@ fn expand_pattern(pattern: &str) -> String {
 fn canonicalize_or_use(path: &Path) -> PathBuf {
     path.canonicalize().unwrap_or_else(|_| path.to_path_buf())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::Config;
+    use std::fs::{self, File};
+    use std::io::Write;
+    use std::path::PathBuf;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    struct TestDir {
+        path: PathBuf,
+    }
+
+    impl TestDir {
+        fn new() -> Self {
+            let mut path = std::env::temp_dir();
+            let timestamp = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("time went backwards")
+                .as_nanos();
+            path.push(format!(
+                "typua-workspace-test-{:?}-{timestamp}",
+                std::thread::current().id()
+            ));
+            fs::create_dir_all(&path).expect("create temp dir");
+            Self { path }
+        }
+
+        fn path(&self) -> &Path {
+            &self.path
+        }
+    }
+
+    impl Drop for TestDir {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.path);
+        }
+    }
+
+    #[test]
+    fn expand_pattern_handles_home_and_env() {
+        let temp = TestDir::new();
+        let home_dir = temp.path().join("home");
+        fs::create_dir_all(&home_dir).expect("create home dir");
+
+        let original_home = std::env::var_os("HOME");
+        unsafe {
+            std::env::set_var("HOME", &home_dir);
+        }
+
+        let with_home = expand_pattern("$HOME/project/init.lua");
+        assert!(with_home.starts_with(home_dir.to_string_lossy().as_ref()));
+
+        let with_tilde = expand_pattern("~/project/init.lua");
+        assert!(with_tilde.starts_with(home_dir.to_string_lossy().as_ref()));
+
+        match original_home {
+            Some(original) => unsafe {
+                std::env::set_var("HOME", original);
+            },
+            None => unsafe {
+                std::env::remove_var("HOME");
+            },
+        }
+    }
+
+    #[test]
+    fn collect_source_files_respects_include_patterns() {
+        let temp = TestDir::new();
+        let root = temp.path();
+        let lua_root = root.join("main.lua");
+        let mut file = File::create(&lua_root).expect("create main.lua");
+        writeln!(file, "print('root')").expect("write main.lua");
+        drop(file);
+
+        let subdir = root.join("sub");
+        fs::create_dir_all(&subdir).expect("create subdir");
+        let lua_sub = subdir.join("module.lua");
+        let mut file = File::create(&lua_sub).expect("create module.lua");
+        writeln!(file, "return {{}}").expect("write module.lua");
+        drop(file);
+
+        let ignored = root.join("ignore.txt");
+        let mut file = File::create(&ignored).expect("create ignore");
+        writeln!(file, "should be ignored").expect("write ignore");
+        drop(file);
+
+        let mut config = Config::default();
+        config.runtime.include = vec!["*.lua".to_string(), "sub/*.lua".to_string()];
+
+        let files =
+            collect_source_files(&root.to_path_buf(), &config).expect("collect source files");
+        let canonical_files: Vec<PathBuf> = files
+            .into_iter()
+            .map(|path| path.canonicalize().unwrap())
+            .collect();
+
+        assert_eq!(canonical_files.len(), 2);
+        assert!(canonical_files.contains(&lua_root.canonicalize().unwrap()));
+        assert!(canonical_files.contains(&lua_sub.canonicalize().unwrap()));
+    }
+}
