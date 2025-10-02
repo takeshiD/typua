@@ -11,7 +11,7 @@ use full_moon::{
     tokenizer::{Position, Symbol, TokenReference, TokenType},
 };
 
-use crate::typing::{infer::expr as infer_expr, types as tty};
+// use crate::typing::{infer::expr as infer_expr, types as tty};
 use crate::{
     cli::CheckOptions,
     diagnostics::{Diagnostic, DiagnosticCode, TextPosition, TextRange},
@@ -101,7 +101,7 @@ pub fn check_ast_with_registry(
     ast: &ast::Ast,
     workspace_registry: Option<&TypeRegistry>,
 ) -> CheckResult {
-    let (annotations, local_registry) = AnnotationIndex::from_source(source);
+    let (annotations, local_registry) = AnnotationIndex::from_ast(ast, source);
     let registry = if let Some(global) = workspace_registry {
         let mut combined = global.clone();
         combined.extend(&local_registry);
@@ -109,6 +109,11 @@ pub fn check_ast_with_registry(
     } else {
         local_registry
     };
+
+    // Build TypedAST for future incremental analysis pipeline.
+    // 現状の型検査はfull_moon ASTに対して行うが、
+    // 仕様に基づきTypedASTを生成しておく（将来的にこちらに切替）。
+    let _typed = crate::typechecker::typed_ast::build_typed_ast(source, ast, &annotations);
 
     TypeChecker::new(path, annotations, registry).check(ast)
 }
@@ -127,6 +132,20 @@ struct TypeChecker<'a> {
 struct VariableEntry {
     ty: TypeKind,
     annotated: bool,
+}
+
+#[derive(Clone, Default)]
+struct ConditionEffect {
+    truthy: Vec<NarrowRule>,
+    falsy: Vec<NarrowRule>,
+}
+
+#[derive(Clone)]
+enum NarrowRule {
+    RequireNil(String),
+    ExcludeNil(String),
+    RequireType(String, TypeKind),
+    ExcludeType(String, TypeKind),
 }
 
 impl<'a> TypeChecker<'a> {
@@ -169,6 +188,24 @@ impl<'a> TypeChecker<'a> {
         self.scopes.push(HashMap::new());
         f(self);
         self.scopes.pop();
+    }
+
+    fn current_scope_snapshot(&self) -> HashMap<String, VariableEntry> {
+        self.scopes.last().cloned().unwrap_or_default()
+    }
+
+    fn replace_current_scope(&mut self, scope: HashMap<String, VariableEntry>) {
+        if let Some(current) = self.scopes.last_mut() {
+            *current = scope;
+        }
+    }
+
+    fn push_scope_with(&mut self, scope: HashMap<String, VariableEntry>) {
+        self.scopes.push(scope);
+    }
+
+    fn pop_scope_map(&mut self) -> HashMap<String, VariableEntry> {
+        self.scopes.pop().unwrap_or_default()
     }
 
     fn take_line_annotations(&mut self, line: usize) -> Vec<Annotation> {
@@ -529,29 +566,71 @@ impl<'a> TypeChecker<'a> {
     }
 
     fn check_if(&mut self, if_stmt: &ast::If) {
-        self.infer_expression(if_stmt.condition());
-        self.with_new_scope(|checker| checker.check_block(if_stmt.block()));
+        let base_scope = self.current_scope_snapshot();
+        let mut branch_scopes: Vec<HashMap<String, VariableEntry>> = Vec::new();
+        let mut remaining_env = base_scope.clone();
 
+        let mut branches: Vec<(Option<&ast::Expression>, &ast::Block)> = Vec::new();
+        branches.push((Some(if_stmt.condition()), if_stmt.block()));
         if let Some(elseifs) = if_stmt.else_if() {
             for elseif in elseifs {
-                self.infer_expression(elseif.condition());
-                self.with_new_scope(|checker| checker.check_block(elseif.block()));
+                branches.push((Some(elseif.condition()), elseif.block()));
             }
         }
-
         if let Some(block) = if_stmt.else_block() {
-            self.with_new_scope(|checker| checker.check_block(block));
+            branches.push((None, block));
         }
+
+        for (condition, block) in branches {
+            let mut branch_env = remaining_env.clone();
+            if let Some(expr) = condition {
+                self.infer_expression(expr);
+                let effect = Self::analyze_condition(expr);
+                Self::apply_narrowing(&mut branch_env, &effect.truthy);
+
+                let mut next_env = remaining_env.clone();
+                Self::apply_narrowing(&mut next_env, &effect.falsy);
+                remaining_env = next_env;
+            }
+
+            self.push_scope_with(branch_env);
+            self.check_block(block);
+            let scope_result = self.pop_scope_map();
+            branch_scopes.push(scope_result);
+        }
+
+        if if_stmt.else_block().is_none() {
+            branch_scopes.push(remaining_env);
+        }
+
+        let merged = Self::merge_branch_scopes(&base_scope, branch_scopes);
+        self.replace_current_scope(merged);
     }
 
     fn check_while(&mut self, while_stmt: &ast::While) {
         self.infer_expression(while_stmt.condition());
-        self.with_new_scope(|checker| checker.check_block(while_stmt.block()));
+        let base_scope = self.current_scope_snapshot();
+        let effect = Self::analyze_condition(while_stmt.condition());
+        let mut loop_env = base_scope.clone();
+        Self::apply_narrowing(&mut loop_env, &effect.truthy);
+
+        self.push_scope_with(loop_env);
+        self.check_block(while_stmt.block());
+        let loop_scope = self.pop_scope_map();
+
+        let merged = Self::merge_branch_scopes(&base_scope, vec![loop_scope, base_scope.clone()]);
+        self.replace_current_scope(merged);
     }
 
     fn check_repeat(&mut self, repeat_stmt: &ast::Repeat) {
-        self.with_new_scope(|checker| checker.check_block(repeat_stmt.block()));
+        let base_scope = self.current_scope_snapshot();
+        self.push_scope_with(base_scope.clone());
+        self.check_block(repeat_stmt.block());
+        let body_scope = self.pop_scope_map();
         self.infer_expression(repeat_stmt.until());
+
+        let merged = Self::merge_branch_scopes(&base_scope, vec![body_scope, base_scope.clone()]);
+        self.replace_current_scope(merged);
     }
 
     fn check_numeric_for(&mut self, numeric_for: &ast::NumericFor) {
@@ -604,6 +683,173 @@ impl<'a> TypeChecker<'a> {
                 self.assign_local(&name, token, ty, annotated_param);
             }
         }
+    }
+
+    fn analyze_condition(expr: &ast::Expression) -> ConditionEffect {
+        match expr {
+            ast::Expression::Var(_) => {
+                if let Some(name) = expression_identifier(expr) {
+                    let mut effect = ConditionEffect::default();
+                    effect.truthy.push(NarrowRule::ExcludeNil(name.clone()));
+                    effect.falsy.push(NarrowRule::RequireNil(name));
+                    effect
+                } else {
+                    ConditionEffect::default()
+                }
+            }
+            ast::Expression::UnaryOperator { unop, expression } => {
+                if matches!(unop, ast::UnOp::Not(_)) {
+                    let inner = Self::analyze_condition(expression);
+                    ConditionEffect {
+                        truthy: inner.falsy,
+                        falsy: inner.truthy,
+                    }
+                } else {
+                    ConditionEffect::default()
+                }
+            }
+            ast::Expression::BinaryOperator { lhs, binop, rhs } => {
+                let symbol = match binop.token().token_type() {
+                    TokenType::Symbol { symbol } => symbol,
+                    _ => return ConditionEffect::default(),
+                };
+                match symbol {
+                    Symbol::TwoEqual => Self::analyze_equality(lhs, rhs, true),
+                    Symbol::TildeEqual => Self::analyze_equality(lhs, rhs, false),
+                    _ => ConditionEffect::default(),
+                }
+            }
+            ast::Expression::Parentheses { expression, .. } => Self::analyze_condition(expression),
+            _ => ConditionEffect::default(),
+        }
+    }
+
+    fn analyze_equality(
+        lhs: &ast::Expression,
+        rhs: &ast::Expression,
+        is_equal: bool,
+    ) -> ConditionEffect {
+        if let Some(effect) = Self::analyze_type_comparison(lhs, rhs, is_equal) {
+            return effect;
+        }
+
+        if expression_is_nil(rhs)
+            && let Some(name) = expression_identifier(lhs)
+        {
+            return Self::build_nil_comparison(name, is_equal);
+        }
+
+        if expression_is_nil(lhs)
+            && let Some(name) = expression_identifier(rhs)
+        {
+            return Self::build_nil_comparison(name, is_equal);
+        }
+
+        ConditionEffect::default()
+    }
+
+    fn build_nil_comparison(name: String, is_equal: bool) -> ConditionEffect {
+        let mut effect = ConditionEffect::default();
+        if is_equal {
+            effect.truthy.push(NarrowRule::RequireNil(name.clone()));
+            effect.falsy.push(NarrowRule::ExcludeNil(name));
+        } else {
+            effect.truthy.push(NarrowRule::ExcludeNil(name.clone()));
+            effect.falsy.push(NarrowRule::RequireNil(name));
+        }
+        effect
+    }
+
+    fn analyze_type_comparison(
+        lhs: &ast::Expression,
+        rhs: &ast::Expression,
+        is_equal: bool,
+    ) -> Option<ConditionEffect> {
+        if let Some(name) = type_call_variable(lhs)
+            && let Some(kind) = type_literal_kind(rhs)
+        {
+            return Some(Self::build_type_comparison(name, kind, is_equal));
+        }
+
+        if let Some(name) = type_call_variable(rhs)
+            && let Some(kind) = type_literal_kind(lhs)
+        {
+            return Some(Self::build_type_comparison(name, kind, is_equal));
+        }
+
+        None
+    }
+
+    fn build_type_comparison(name: String, kind: TypeKind, is_equal: bool) -> ConditionEffect {
+        let mut effect = ConditionEffect::default();
+        if is_equal {
+            effect
+                .truthy
+                .push(NarrowRule::RequireType(name.clone(), kind.clone()));
+            effect.falsy.push(NarrowRule::ExcludeType(name, kind));
+        } else {
+            effect
+                .truthy
+                .push(NarrowRule::ExcludeType(name.clone(), kind.clone()));
+            effect.falsy.push(NarrowRule::RequireType(name, kind));
+        }
+        effect
+    }
+
+    fn apply_narrowing(scope: &mut HashMap<String, VariableEntry>, rules: &[NarrowRule]) {
+        for rule in rules {
+            match rule {
+                NarrowRule::RequireNil(name) => {
+                    if let Some(entry) = scope.get_mut(name) {
+                        entry.ty = type_only_nil(&entry.ty);
+                    }
+                }
+                NarrowRule::ExcludeNil(name) => {
+                    if let Some(entry) = scope.get_mut(name) {
+                        entry.ty = type_without_nil(&entry.ty);
+                    }
+                }
+                NarrowRule::RequireType(name, target) => {
+                    if let Some(entry) = scope.get_mut(name) {
+                        entry.ty = type_only_kind(&entry.ty, target);
+                    }
+                }
+                NarrowRule::ExcludeType(name, target) => {
+                    if let Some(entry) = scope.get_mut(name) {
+                        entry.ty = type_without_kind(&entry.ty, target);
+                    }
+                }
+            }
+        }
+    }
+
+    fn merge_branch_scopes(
+        base: &HashMap<String, VariableEntry>,
+        branches: Vec<HashMap<String, VariableEntry>>,
+    ) -> HashMap<String, VariableEntry> {
+        let mut merged = base.clone();
+        for key in base.keys() {
+            let mut ty: Option<TypeKind> = None;
+            let mut annotated = base.get(key).map(|entry| entry.annotated).unwrap_or(false);
+
+            for branch in &branches {
+                if let Some(entry) = branch.get(key) {
+                    annotated |= entry.annotated;
+                    ty = Some(match ty {
+                        None => entry.ty.clone(),
+                        Some(ref acc) => union_type(acc, &entry.ty),
+                    });
+                }
+            }
+
+            if let Some(entry) = merged.get_mut(key) {
+                if let Some(new_ty) = ty {
+                    entry.ty = new_ty;
+                }
+                entry.annotated |= annotated;
+            }
+        }
+        merged
     }
 
     fn assign_local(&mut self, name: &str, token: &TokenReference, ty: TypeKind, annotated: bool) {
@@ -675,14 +921,15 @@ impl<'a> TypeChecker<'a> {
             return;
         }
 
-        if let Some(existing) = self.lookup_entry(name) {
-            if (existing.annotated || annotated) && !existing.ty.matches(ty) {
-                let message = format!(
-                    "variable '{name}' was previously inferred as type {} but is now assigned type {ty}",
-                    existing.ty
-                );
-                self.push_diagnostic(token, message, Some(DiagnosticCode::AssignTypeMismatch));
-            }
+        if let Some(existing) = self.lookup_entry(name)
+            && (existing.annotated || annotated)
+            && !existing.ty.matches(ty)
+        {
+            let message = format!(
+                "variable '{name}' was previously inferred as type {} but is now assigned type {ty}",
+                existing.ty
+            );
+            self.push_diagnostic(token, message, Some(DiagnosticCode::AssignTypeMismatch));
         }
     }
 
@@ -747,8 +994,8 @@ impl<'a> TypeChecker<'a> {
             ast::Expression::BinaryOperator { lhs, binop, rhs } => {
                 self.infer_binary(lhs, binop, rhs)
             }
-            ast::Expression::FunctionCall(call) => {
-                self.try_record_function_call_type(call);
+            ast::Expression::FunctionCall(_call) => {
+                // self.try_record_function_call_type(call);
                 TypeKind::Unknown
             }
             ast::Expression::Var(var) => self.infer_var(var),
@@ -873,28 +1120,6 @@ impl<'a> TypeChecker<'a> {
     fn path_buf(&self) -> PathBuf {
         self.path.to_path_buf()
     }
-
-    fn try_record_function_call_type(&mut self, call: &ast::FunctionCall) {
-        // Only simple name calls for now to place the hover position
-        let name_token = match call.prefix() {
-            ast::Prefix::Name(n) => n,
-            _ => return,
-        };
-
-        // Collect argument types from current heuristic inference and convert
-        let mut args_typing: Vec<tty::Type> = Vec::new();
-        // Note: full_moon API differences across versions; for now, skip reading args
-        // and proceed with zero-arg inference to avoid API coupling.
-
-        let mut next = 0u32;
-        let callee = tty::Type::Var(tty::TyVarId({
-            next += 1;
-            next - 1
-        }));
-        if let Ok((_ret, _)) = infer_expr::infer_call_return(callee, args_typing) {
-            // Intentionally not recording to avoid interfering with existing diagnostics yet.
-        }
-    }
 }
 
 fn token_identifier(token: &TokenReference) -> Option<String> {
@@ -929,6 +1154,165 @@ fn extract_field_assignment(var: &ast::Var) -> Option<(&TokenReference, &TokenRe
         return Some((base, name));
     }
     None
+}
+
+fn expression_identifier(expr: &ast::Expression) -> Option<String> {
+    match expr {
+        ast::Expression::Var(ast::Var::Name(token)) => token_identifier(token),
+        ast::Expression::Parentheses { expression, .. } => expression_identifier(expression),
+        _ => None,
+    }
+}
+
+fn expression_is_nil(expr: &ast::Expression) -> bool {
+    match expr {
+        ast::Expression::Symbol(token) => matches!(
+            token.token().token_type(),
+            TokenType::Symbol {
+                symbol: Symbol::Nil
+            }
+        ),
+        ast::Expression::Parentheses { expression, .. } => expression_is_nil(expression),
+        _ => false,
+    }
+}
+
+fn type_call_variable(expr: &ast::Expression) -> Option<String> {
+    let ast::Expression::FunctionCall(call) = expr else {
+        return None;
+    };
+
+    let ast::Prefix::Name(name_token) = call.prefix() else {
+        return None;
+    };
+
+    if token_identifier(name_token).as_deref() != Some("type") {
+        return None;
+    }
+
+    let mut suffixes = call.suffixes();
+    let ast::Suffix::Call(ast::Call::AnonymousCall(args)) = suffixes.next()? else {
+        return None;
+    };
+
+    if suffixes.next().is_some() {
+        return None;
+    }
+
+    let ast::FunctionArgs::Parentheses { arguments, .. } = args else {
+        return None;
+    };
+
+    let mut iter = arguments.pairs();
+    let first = iter.next()?.value();
+    if iter.next().is_some() {
+        return None;
+    }
+
+    expression_identifier(first)
+}
+
+fn type_literal_kind(expr: &ast::Expression) -> Option<TypeKind> {
+    match expr {
+        ast::Expression::String(token) => {
+            let raw = token.to_string();
+            let trimmed = raw.trim();
+            let literal = trimmed.trim_matches(|c| c == '"' || c == '\'');
+            if literal.is_empty() {
+                return None;
+            }
+            match literal {
+                "number" => Some(TypeKind::Number),
+                "string" => Some(TypeKind::String),
+                "table" => Some(TypeKind::Table),
+                "boolean" => Some(TypeKind::Boolean),
+                "function" => Some(TypeKind::Function),
+                "thread" => Some(TypeKind::Thread),
+                "nil" => Some(TypeKind::Nil),
+                other => Some(TypeKind::Custom(other.to_string())),
+            }
+        }
+        _ => None,
+    }
+}
+
+fn type_only_nil(ty: &TypeKind) -> TypeKind {
+    type_only_kind(ty, &TypeKind::Nil)
+}
+
+fn type_without_nil(ty: &TypeKind) -> TypeKind {
+    type_without_kind(ty, &TypeKind::Nil)
+}
+
+fn type_only_kind(ty: &TypeKind, target: &TypeKind) -> TypeKind {
+    if type_contains_kind(ty, target) {
+        target.clone()
+    } else {
+        TypeKind::Unknown
+    }
+}
+
+fn type_without_kind(ty: &TypeKind, target: &TypeKind) -> TypeKind {
+    match ty {
+        TypeKind::Union(items) => {
+            let mut kept = Vec::new();
+            for item in items {
+                let filtered = type_without_kind(item, target);
+                if !matches!(filtered, TypeKind::Unknown) {
+                    flatten_union(&filtered, &mut kept);
+                }
+            }
+            build_union(kept)
+        }
+        other if other == target => TypeKind::Unknown,
+        _ => ty.clone(),
+    }
+}
+
+fn type_contains_kind(ty: &TypeKind, target: &TypeKind) -> bool {
+    match ty {
+        other if other == target => true,
+        TypeKind::Union(items) => items.iter().any(|item| type_contains_kind(item, target)),
+        _ => false,
+    }
+}
+
+fn union_type(a: &TypeKind, b: &TypeKind) -> TypeKind {
+    if matches!(a, TypeKind::Unknown) || matches!(b, TypeKind::Unknown) {
+        return TypeKind::Unknown;
+    }
+    if a == b {
+        return a.clone();
+    }
+    let mut items = Vec::new();
+    flatten_union(a, &mut items);
+    flatten_union(b, &mut items);
+    build_union(items)
+}
+
+fn flatten_union(ty: &TypeKind, out: &mut Vec<TypeKind>) {
+    match ty {
+        TypeKind::Union(items) => {
+            for item in items {
+                flatten_union(item, out);
+            }
+        }
+        other => {
+            if !out.iter().any(|existing| existing == other) {
+                out.push(other.clone());
+            }
+        }
+    }
+}
+
+fn build_union(mut items: Vec<TypeKind>) -> TypeKind {
+    if items.is_empty() {
+        TypeKind::Unknown
+    } else if items.len() == 1 {
+        items.pop().unwrap()
+    } else {
+        TypeKind::Union(items)
+    }
 }
 
 #[cfg(test)]
@@ -1092,6 +1476,113 @@ mod tests {
             "#,
         );
         assert!(result.diagnostics.is_empty());
+    }
+
+    #[test]
+    fn narrowing_excludes_nil_in_truthy_branch() {
+        let source = r#"
+            ---@type number|nil
+            local value = nil
+            if value ~= nil then
+                value = value
+            else
+                value = value
+            end
+        "#
+        .unindent();
+
+        let result = run_type_check(source.as_str());
+        assert!(result.diagnostics.is_empty());
+
+        let position = DocumentPosition { row: 4, col: 5 };
+        let info = result
+            .type_map
+            .get(&position)
+            .expect("type info for narrowed assignment");
+        assert_eq!(info.ty, "number");
+
+        let position = DocumentPosition { row: 6, col: 5 };
+        let info = result
+            .type_map
+            .get(&position)
+            .expect("type info for narrowed assignment");
+        assert_eq!(info.ty, "nil");
+    }
+
+    #[test]
+    fn narrowing_exclude_builting_type_in_not_equals() {
+        let source = r#"
+            ---@type number|string|boolean
+            local value = "hello"
+            if type(value) ~= "string" then
+                local num_or_bool = value
+            elseif type(value) ~= "boolean" then
+                local num = value
+            end
+        "#
+        .unindent();
+
+        let result = run_type_check(source.as_str());
+        assert!(result.diagnostics.is_empty());
+
+        // num_or_bool
+        let position = DocumentPosition { row: 4, col: 11 };
+        let info = result
+            .type_map
+            .get(&position)
+            .expect("type info for narrowed assignment");
+        assert_eq!(info.ty, "boolean|number");
+
+        // num
+        let position = DocumentPosition { row: 6, col: 11 };
+        let info = result
+            .type_map
+            .get(&position)
+            .expect("type info for narrowed assignment");
+        assert_eq!(info.ty, "string");
+    }
+
+    #[test]
+    fn narrowing_exclude_builting_type_in_equals() {
+        let source = r#"
+            ---@type number|string|boolean
+            local value = "hello"
+            if type(value) == "string" then
+                local s = value
+            elseif type(value) == "boolean" then
+                local b = value
+            else
+                local n = value
+            end
+        "#
+        .unindent();
+
+        let result = run_type_check(source.as_str());
+        assert!(result.diagnostics.is_empty());
+
+        // string
+        let position = DocumentPosition { row: 4, col: 11 };
+        let info = result
+            .type_map
+            .get(&position)
+            .expect("type info for narrowed assignment");
+        assert_eq!(info.ty, "string");
+
+        // boolean
+        let position = DocumentPosition { row: 6, col: 11 };
+        let info = result
+            .type_map
+            .get(&position)
+            .expect("type info for narrowed assignment");
+        assert_eq!(info.ty, "boolean");
+
+        // number
+        let position = DocumentPosition { row: 8, col: 11 };
+        let info = result
+            .type_map
+            .get(&position)
+            .expect("type info for narrowed assignment");
+        assert_eq!(info.ty, "number");
     }
 
     #[test]

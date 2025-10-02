@@ -12,7 +12,7 @@ use crate::{
     error::{Result, TypuaError},
 };
 
-pub fn collect_source_files(target: &Path, config: &Config) -> Result<Vec<PathBuf>> {
+pub fn collect_source_files(target: &PathBuf, config: &Config) -> Result<Vec<PathBuf>> {
     let metadata = fs::metadata(target).map_err(|source| TypuaError::Metadata {
         path: target.to_path_buf(),
         source,

@@ -177,7 +177,7 @@ impl ClassInfo {
     }
 }
 
-#[derive(Default, Clone)]
+#[derive(Debug, Default, Clone)]
 pub struct TypeRegistry {
     pub classes: HashMap<String, ClassInfo>,
     pub enums: HashMap<String, ()>,
@@ -240,10 +240,7 @@ impl TypeRegistry {
 
     pub fn extend(&mut self, other: &TypeRegistry) {
         for (name, info) in &other.classes {
-            let entry = self
-                .classes
-                .entry(name.clone())
-                .or_insert_with(ClassInfo::default);
+            let entry = self.classes.entry(name.clone()).or_default();
             entry.exact = info.exact;
             entry.parent = info.parent.clone();
             for (field, ty) in &info.fields {
@@ -283,7 +280,7 @@ pub struct Annotation {
     pub ty: AnnotatedType,
 }
 
-#[derive(Default, Clone)]
+#[derive(Debug, Default, Clone)]
 pub struct AnnotationIndex {
     pub by_line: HashMap<usize, Vec<Annotation>>,
     pub class_hints: HashMap<usize, Vec<String>>,
