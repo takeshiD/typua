@@ -144,6 +144,8 @@ struct ConditionEffect {
 enum NarrowRule {
     RequireNil(String),
     ExcludeNil(String),
+    RequireType(String, TypeKind),
+    ExcludeType(String, TypeKind),
 }
 
 impl<'a> TypeChecker<'a> {
@@ -727,6 +729,10 @@ impl<'a> TypeChecker<'a> {
         rhs: &ast::Expression,
         is_equal: bool,
     ) -> ConditionEffect {
+        if let Some(effect) = Self::analyze_type_comparison(lhs, rhs, is_equal) {
+            return effect;
+        }
+
         if expression_is_nil(rhs)
             && let Some(name) = expression_identifier(lhs)
         {
@@ -754,6 +760,42 @@ impl<'a> TypeChecker<'a> {
         effect
     }
 
+    fn analyze_type_comparison(
+        lhs: &ast::Expression,
+        rhs: &ast::Expression,
+        is_equal: bool,
+    ) -> Option<ConditionEffect> {
+        if let Some(name) = type_call_variable(lhs)
+            && let Some(kind) = type_literal_kind(rhs)
+        {
+            return Some(Self::build_type_comparison(name, kind, is_equal));
+        }
+
+        if let Some(name) = type_call_variable(rhs)
+            && let Some(kind) = type_literal_kind(lhs)
+        {
+            return Some(Self::build_type_comparison(name, kind, is_equal));
+        }
+
+        None
+    }
+
+    fn build_type_comparison(name: String, kind: TypeKind, is_equal: bool) -> ConditionEffect {
+        let mut effect = ConditionEffect::default();
+        if is_equal {
+            effect
+                .truthy
+                .push(NarrowRule::RequireType(name.clone(), kind.clone()));
+            effect.falsy.push(NarrowRule::ExcludeType(name, kind));
+        } else {
+            effect
+                .truthy
+                .push(NarrowRule::ExcludeType(name.clone(), kind.clone()));
+            effect.falsy.push(NarrowRule::RequireType(name, kind));
+        }
+        effect
+    }
+
     fn apply_narrowing(scope: &mut HashMap<String, VariableEntry>, rules: &[NarrowRule]) {
         for rule in rules {
             match rule {
@@ -765,6 +807,16 @@ impl<'a> TypeChecker<'a> {
                 NarrowRule::ExcludeNil(name) => {
                     if let Some(entry) = scope.get_mut(name) {
                         entry.ty = type_without_nil(&entry.ty);
+                    }
+                }
+                NarrowRule::RequireType(name, target) => {
+                    if let Some(entry) = scope.get_mut(name) {
+                        entry.ty = type_only_kind(&entry.ty, target);
+                    }
+                }
+                NarrowRule::ExcludeType(name, target) => {
+                    if let Some(entry) = scope.get_mut(name) {
+                        entry.ty = type_without_kind(&entry.ty, target);
                     }
                 }
             }
@@ -1125,31 +1177,103 @@ fn expression_is_nil(expr: &ast::Expression) -> bool {
     }
 }
 
+fn type_call_variable(expr: &ast::Expression) -> Option<String> {
+    let ast::Expression::FunctionCall(call) = expr else {
+        return None;
+    };
+
+    let ast::Prefix::Name(name_token) = call.prefix() else {
+        return None;
+    };
+
+    if token_identifier(name_token).as_deref() != Some("type") {
+        return None;
+    }
+
+    let mut suffixes = call.suffixes();
+    let ast::Suffix::Call(ast::Call::AnonymousCall(args)) = suffixes.next()? else {
+        return None;
+    };
+
+    if suffixes.next().is_some() {
+        return None;
+    }
+
+    let ast::FunctionArgs::Parentheses { arguments, .. } = args else {
+        return None;
+    };
+
+    let mut iter = arguments.pairs();
+    let first = iter.next()?.value();
+    if iter.next().is_some() {
+        return None;
+    }
+
+    expression_identifier(first)
+}
+
+fn type_literal_kind(expr: &ast::Expression) -> Option<TypeKind> {
+    match expr {
+        ast::Expression::String(token) => {
+            let raw = token.to_string();
+            let trimmed = raw.trim();
+            let literal = trimmed.trim_matches(|c| c == '"' || c == '\'');
+            if literal.is_empty() {
+                return None;
+            }
+            match literal {
+                "number" => Some(TypeKind::Number),
+                "string" => Some(TypeKind::String),
+                "table" => Some(TypeKind::Table),
+                "boolean" => Some(TypeKind::Boolean),
+                "function" => Some(TypeKind::Function),
+                "thread" => Some(TypeKind::Thread),
+                "nil" => Some(TypeKind::Nil),
+                other => Some(TypeKind::Custom(other.to_string())),
+            }
+        }
+        _ => None,
+    }
+}
+
 fn type_only_nil(ty: &TypeKind) -> TypeKind {
-    if contains_nil(ty) {
-        TypeKind::Nil
+    type_only_kind(ty, &TypeKind::Nil)
+}
+
+fn type_without_nil(ty: &TypeKind) -> TypeKind {
+    type_without_kind(ty, &TypeKind::Nil)
+}
+
+fn type_only_kind(ty: &TypeKind, target: &TypeKind) -> TypeKind {
+    if type_contains_kind(ty, target) {
+        target.clone()
     } else {
         TypeKind::Unknown
     }
 }
 
-fn type_without_nil(ty: &TypeKind) -> TypeKind {
+fn type_without_kind(ty: &TypeKind, target: &TypeKind) -> TypeKind {
     match ty {
-        TypeKind::Nil => TypeKind::Unknown,
         TypeKind::Union(items) => {
             let mut kept = Vec::new();
             for item in items {
-                if matches!(item, TypeKind::Nil) {
-                    continue;
-                }
-                let filtered = type_without_nil(item);
+                let filtered = type_without_kind(item, target);
                 if !matches!(filtered, TypeKind::Unknown) {
                     flatten_union(&filtered, &mut kept);
                 }
             }
             build_union(kept)
         }
+        other if other == target => TypeKind::Unknown,
         _ => ty.clone(),
+    }
+}
+
+fn type_contains_kind(ty: &TypeKind, target: &TypeKind) -> bool {
+    match ty {
+        other if other == target => true,
+        TypeKind::Union(items) => items.iter().any(|item| type_contains_kind(item, target)),
+        _ => false,
     }
 }
 
@@ -1164,14 +1288,6 @@ fn union_type(a: &TypeKind, b: &TypeKind) -> TypeKind {
     flatten_union(a, &mut items);
     flatten_union(b, &mut items);
     build_union(items)
-}
-
-fn contains_nil(ty: &TypeKind) -> bool {
-    match ty {
-        TypeKind::Nil => true,
-        TypeKind::Union(items) => items.iter().any(contains_nil),
-        _ => false,
-    }
 }
 
 fn flatten_union(ty: &TypeKind, out: &mut Vec<TypeKind>) {
@@ -1367,9 +1483,10 @@ mod tests {
         let source = r#"
             ---@type number|nil
             local value = nil
-            value = 1
             if value ~= nil then
-            value = value
+                value = value
+            else
+                value = value
             end
         "#
         .unindent();
@@ -1377,7 +1494,90 @@ mod tests {
         let result = run_type_check(source.as_str());
         assert!(result.diagnostics.is_empty());
 
-        let position = DocumentPosition { row: 5, col: 1 };
+        let position = DocumentPosition { row: 4, col: 5 };
+        let info = result
+            .type_map
+            .get(&position)
+            .expect("type info for narrowed assignment");
+        assert_eq!(info.ty, "number");
+
+        let position = DocumentPosition { row: 6, col: 5 };
+        let info = result
+            .type_map
+            .get(&position)
+            .expect("type info for narrowed assignment");
+        assert_eq!(info.ty, "nil");
+    }
+
+    #[test]
+    fn narrowing_exclude_builting_type_in_not_equals() {
+        let source = r#"
+            ---@type number|string|boolean
+            local value = "hello"
+            if type(value) ~= "string" then
+                local num_or_bool = value
+            elseif type(value) ~= "boolean" then
+                local num = value
+            end
+        "#
+        .unindent();
+
+        let result = run_type_check(source.as_str());
+        assert!(result.diagnostics.is_empty());
+
+        // num_or_bool
+        let position = DocumentPosition { row: 4, col: 11 };
+        let info = result
+            .type_map
+            .get(&position)
+            .expect("type info for narrowed assignment");
+        assert_eq!(info.ty, "boolean|number");
+
+        // num
+        let position = DocumentPosition { row: 6, col: 11 };
+        let info = result
+            .type_map
+            .get(&position)
+            .expect("type info for narrowed assignment");
+        assert_eq!(info.ty, "string");
+    }
+
+    #[test]
+    fn narrowing_exclude_builting_type_in_equals() {
+        let source = r#"
+            ---@type number|string|boolean
+            local value = "hello"
+            if type(value) == "string" then
+                local s = value
+            elseif type(value) == "boolean" then
+                local b = value
+            else
+                local n = value
+            end
+        "#
+        .unindent();
+
+        let result = run_type_check(source.as_str());
+        assert!(result.diagnostics.is_empty());
+
+        // string
+        let position = DocumentPosition { row: 4, col: 11 };
+        let info = result
+            .type_map
+            .get(&position)
+            .expect("type info for narrowed assignment");
+        assert_eq!(info.ty, "string");
+
+        // boolean
+        let position = DocumentPosition { row: 6, col: 11 };
+        let info = result
+            .type_map
+            .get(&position)
+            .expect("type info for narrowed assignment");
+        assert_eq!(info.ty, "boolean");
+
+        // number
+        let position = DocumentPosition { row: 8, col: 11 };
         let info = result
             .type_map
             .get(&position)
