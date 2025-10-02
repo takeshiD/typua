@@ -20,7 +20,12 @@
 - [x] `AnnotationIndex` を用いた注釈の付与（パラメータ・return の集約）
 - [x] 変換の単体テスト（最小ケース）
 - [ ] full_moon AST 全網羅の変換
+- [ ] Luau/CfxLua固有バリアント（`CompoundAssignment`, `IfExpression`, `InterpolatedString`, `TypeAssertion` 等）の取扱方針を決定（実装or未対応診断）
+- [ ] Lua 5.2+/LuaJIT 構文（`Goto`, `Label`）を `Stmt` へ追加し、TypedAST で扱う
 - [ ] 位置情報（`TextRange`）の精度向上（全ノード）
+- [ ] `token_range` が取得できない場合のフォールバック（`Option<TextRange>` など）を導入し `(0,0)` へ落ちないようにする
+- [ ] `merge_ranges` で無効範囲を検出し子ノード範囲へ置換する仕組みを追加
+- [ ] `Identifier` 生成時に `TokenReference::basic_symbol` 起因の前後空白を補正し、Luau特有トークンでも範囲がずれないようにする
 
 ## Type Check Pipeline
 - [x] `check_ast_with_registry` で TypedAST を生成（パイプライン挿入）
@@ -40,6 +45,7 @@
 - [ ] ワークスペース横断のTypedAST生成・参照テスト
 - [ ] 負例テスト（不正アノテーションや壊れた型式）
 - [ ] TypedAST 化した checker の新規ユニットテスト（narrowing/演算検証の追加ケース）
+- [ ] Luau/Lua52系構文を含むフィクスチャでTypedASTカバレッジと診断位置の検証を追加
 
 ## Tooling
 - [x] `cargo clippy --all-targets --all-features` の警告ゼロ
