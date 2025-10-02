@@ -287,6 +287,14 @@ pub struct AnnotationIndex {
 }
 
 impl AnnotationIndex {
+    pub fn line_annotations(&self, line: usize) -> Vec<Annotation> {
+        self.by_line.get(&line).cloned().unwrap_or_default()
+    }
+
+    pub fn line_class_hints(&self, line: usize) -> Vec<String> {
+        self.class_hints.get(&line).cloned().unwrap_or_default()
+    }
+
     pub fn take(&mut self, line: usize) -> Vec<Annotation> {
         self.by_line.remove(&line).unwrap_or_default()
     }

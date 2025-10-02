@@ -3,9 +3,10 @@ use std::collections::HashMap;
 use full_moon::ast;
 use full_moon::ast::punctuated::Punctuated;
 use full_moon::node::Node;
+use full_moon::tokenizer::{Token, TokenReference};
 
-use super::types::{AnnotatedType, AnnotationIndex, AnnotationUsage};
-use crate::diagnostics::TextRange;
+use super::types::{AnnotatedType, Annotation, AnnotationIndex, AnnotationUsage};
+use crate::diagnostics::{TextPosition, TextRange};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Program {
@@ -18,6 +19,7 @@ pub struct Block {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+#[allow(clippy::large_enum_variant)]
 pub enum Stmt {
     LocalAssign(LocalAssign),
     Assign(Assign),
@@ -36,10 +38,26 @@ pub enum Stmt {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+pub struct Identifier {
+    pub name: String,
+    pub range: TextRange,
+}
+
+impl Identifier {
+    fn new(name: impl Into<String>, range: TextRange) -> Self {
+        Self {
+            name: name.into(),
+            range,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub struct LocalAssign {
-    pub names: Vec<String>,
+    pub names: Vec<Identifier>,
     pub values: Vec<Expr>,
-    pub ann: HashMap<String, AnnotatedType>,
+    pub annotations: Vec<Annotation>,
+    pub class_hints: Vec<String>,
     pub range: TextRange,
 }
 
@@ -47,6 +65,8 @@ pub struct LocalAssign {
 pub struct Assign {
     pub targets: Vec<Expr>,
     pub values: Vec<Expr>,
+    pub annotations: Vec<Annotation>,
+    pub class_hints: Vec<String>,
     pub range: TextRange,
 }
 
@@ -56,28 +76,40 @@ pub struct Function {
     pub params: Vec<FunctionParam>,
     pub param_types: HashMap<String, AnnotatedType>,
     pub returns: Vec<AnnotatedType>,
+    pub annotations: Vec<Annotation>,
     pub body: Block,
     pub range: TextRange,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct FunctionName {
-    pub path: Vec<String>,
-    pub method: Option<String>,
+    pub path: Vec<Identifier>,
+    pub method: Option<Identifier>,
+}
+
+impl FunctionName {
+    pub fn last_component(&self) -> Option<&Identifier> {
+        if let Some(method) = &self.method {
+            Some(method)
+        } else {
+            self.path.last()
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct FunctionParam {
-    pub name: Option<String>,
+    pub name: Option<Identifier>,
     pub is_vararg: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct LocalFunction {
-    pub name: String,
+    pub name: Identifier,
     pub params: Vec<FunctionParam>,
     pub param_types: HashMap<String, AnnotatedType>,
     pub returns: Vec<AnnotatedType>,
+    pub annotations: Vec<Annotation>,
     pub body: Block,
     pub range: TextRange,
 }
@@ -123,7 +155,7 @@ pub struct DoStmt {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct NumericForStmt {
-    pub index: String,
+    pub index: Identifier,
     pub start: Expr,
     pub end: Expr,
     pub step: Option<Expr>,
@@ -133,7 +165,7 @@ pub struct NumericForStmt {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct GenericForStmt {
-    pub names: Vec<String>,
+    pub names: Vec<Identifier>,
     pub generators: Vec<Expr>,
     pub body: Block,
     pub range: TextRange,
@@ -146,36 +178,69 @@ pub struct ReturnStmt {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub enum Expr {
+pub struct Expr {
+    pub kind: ExprKind,
+    pub range: TextRange,
+}
+
+impl Expr {
+    fn new(kind: ExprKind, range: TextRange) -> Self {
+        Self { kind, range }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum ExprKind {
     Nil,
     Boolean(bool),
     Number(String),
     String(String),
     VarArgs,
     TableConstructor(Vec<TableField>),
-    Name(String),
-    Field(Box<Expr>, String),
-    Index(Box<Expr>, Box<Expr>),
-    BinaryOp(Box<Expr>, String, Box<Expr>),
-    UnaryOp(String, Box<Expr>),
-    Call(Box<CallExpr>),
-    MethodCall(Box<MethodCallExpr>),
+    Name(Identifier),
+    Field {
+        target: Box<Expr>,
+        name: Identifier,
+    },
+    Index {
+        target: Box<Expr>,
+        key: Box<Expr>,
+    },
+    BinaryOp {
+        left: Box<Expr>,
+        operator: Operator,
+        right: Box<Expr>,
+    },
+    UnaryOp {
+        operator: Operator,
+        expression: Box<Expr>,
+    },
+    Call(CallExpr),
+    MethodCall(MethodCallExpr),
     Function(FunctionExpr),
     Parentheses(Box<Expr>),
-    Unknown(TextRange),
+    Unknown,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Operator {
+    pub symbol: String,
+    pub range: TextRange,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct CallExpr {
     pub function: Box<Expr>,
     pub args: CallArgs,
+    pub range: TextRange,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct MethodCallExpr {
     pub receiver: Box<Expr>,
-    pub method: String,
+    pub method: Identifier,
     pub args: CallArgs,
+    pub range: TextRange,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -189,13 +254,25 @@ pub enum CallArgs {
 pub struct FunctionExpr {
     pub params: Vec<FunctionParam>,
     pub body: Block,
+    pub range: TextRange,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum TableField {
-    Array(Expr),
-    NameValue { name: String, value: Expr },
-    ExpressionKey { key: Expr, value: Expr },
+    Array {
+        value: Expr,
+        range: TextRange,
+    },
+    NameValue {
+        name: Identifier,
+        value: Expr,
+        range: TextRange,
+    },
+    ExpressionKey {
+        key: Expr,
+        value: Expr,
+        range: TextRange,
+    },
 }
 
 pub fn build_typed_ast(_source: &str, ast: &ast::Ast, annotations: &AnnotationIndex) -> Program {
@@ -235,39 +312,45 @@ fn to_block(block: &ast::Block, annotations: &AnnotationIndex) -> Block {
 fn to_stmt(stmt: &ast::Stmt, annotations: &AnnotationIndex) -> Stmt {
     match stmt {
         ast::Stmt::LocalAssignment(assign) => {
-            let names: Vec<String> = assign
+            let line = assign.local_token().token().start_position().line();
+            let names = assign
                 .names()
                 .iter()
-                .map(|token| token.token().to_string())
+                .map(|token| identifier_from_token(token.token()))
                 .collect();
-
-            let mut ann = HashMap::new();
-            if let Some(pos) = assign.start_position()
-                && let Some(vec) = annotations.by_line.get(&pos.line())
-            {
-                for a in vec.iter() {
-                    if let (AnnotationUsage::Param | AnnotationUsage::Type, Some(name)) =
-                        (&a.usage, &a.name)
-                    {
-                        ann.insert(name.clone(), a.ty.clone());
-                    }
-                }
-            }
-
+            let annotations_for_line = annotations.line_annotations(line);
+            let class_hints = annotations.line_class_hints(line);
             let values = assign
                 .expressions()
                 .pairs()
                 .map(|pair| to_expr(pair.value(), annotations))
                 .collect();
-
             Stmt::LocalAssign(LocalAssign {
                 names,
                 values,
-                ann,
+                annotations: annotations_for_line,
+                class_hints,
                 range: token_range(assign),
             })
         }
         ast::Stmt::Assignment(assign) => {
+            let line = assign
+                .variables()
+                .pairs()
+                .next()
+                .and_then(|pair| pair.value().start_position())
+                .map(|pos| pos.line())
+                .unwrap_or(0);
+            let annotations_for_line = if line > 0 {
+                annotations.line_annotations(line)
+            } else {
+                Vec::new()
+            };
+            let class_hints = if line > 0 {
+                annotations.line_class_hints(line)
+            } else {
+                Vec::new()
+            };
             let targets = assign
                 .variables()
                 .pairs()
@@ -281,39 +364,43 @@ fn to_stmt(stmt: &ast::Stmt, annotations: &AnnotationIndex) -> Stmt {
             Stmt::Assign(Assign {
                 targets,
                 values,
+                annotations: annotations_for_line,
+                class_hints,
                 range: token_range(assign),
             })
         }
         ast::Stmt::FunctionDeclaration(function) => {
+            let line = function.function_token().token().start_position().line();
+            let annotations_for_line = annotations.line_annotations(line);
+            let (param_types, returns, remaining_annotations) =
+                function_annotations(annotations_for_line);
             let name = to_function_name(function.name());
             let params = to_function_params(function.body().parameters());
-            let (param_types, returns) = function_annotations(
-                function.function_token().token().start_position().line(),
-                annotations,
-            );
             let body = to_block(function.body().block(), annotations);
             Stmt::Function(Function {
                 name,
                 params,
                 param_types,
                 returns,
+                annotations: remaining_annotations,
                 body,
                 range: token_range(function),
             })
         }
         ast::Stmt::LocalFunction(function) => {
-            let name = function.name().token().to_string();
+            let line = function.function_token().token().start_position().line();
+            let annotations_for_line = annotations.line_annotations(line);
+            let (param_types, returns, remaining_annotations) =
+                function_annotations(annotations_for_line);
+            let name = identifier_from_token(function.name().token());
             let params = to_function_params(function.body().parameters());
-            let (param_types, returns) = function_annotations(
-                function.function_token().token().start_position().line(),
-                annotations,
-            );
             let body = to_block(function.body().block(), annotations);
             Stmt::LocalFunction(LocalFunction {
                 name,
                 params,
                 param_types,
                 returns,
+                annotations: remaining_annotations,
                 body,
                 range: token_range(function),
             })
@@ -321,8 +408,8 @@ fn to_stmt(stmt: &ast::Stmt, annotations: &AnnotationIndex) -> Stmt {
         ast::Stmt::FunctionCall(call) => {
             let expr = to_function_call(call, annotations);
             Stmt::FunctionCall(FunctionCallStmt {
-                expression: expr,
                 range: token_range(call),
+                expression: expr,
             })
         }
         ast::Stmt::If(if_stmt) => {
@@ -363,7 +450,7 @@ fn to_stmt(stmt: &ast::Stmt, annotations: &AnnotationIndex) -> Stmt {
             range: token_range(do_stmt),
         }),
         ast::Stmt::NumericFor(numeric_for) => {
-            let index = numeric_for.index_variable().token().to_string();
+            let index = identifier_from_token_ref(numeric_for.index_variable());
             let start = to_expr(numeric_for.start(), annotations);
             let end = to_expr(numeric_for.end(), annotations);
             let step = numeric_for.step().map(|expr| to_expr(expr, annotations));
@@ -381,7 +468,7 @@ fn to_stmt(stmt: &ast::Stmt, annotations: &AnnotationIndex) -> Stmt {
             let names = generic_for
                 .names()
                 .iter()
-                .map(|token| token.token().to_string())
+                .map(|token| identifier_from_token(token.token()))
                 .collect();
             let generators = generic_for
                 .expressions()
@@ -401,46 +488,81 @@ fn to_stmt(stmt: &ast::Stmt, annotations: &AnnotationIndex) -> Stmt {
 }
 
 fn to_expr(expr: &ast::Expression, annotations: &AnnotationIndex) -> Expr {
+    let range = token_range(expr);
     match expr {
-        ast::Expression::Number(token) => Expr::Number(token.to_string()),
-        ast::Expression::String(token) => Expr::String(token.to_string()),
-        ast::Expression::Symbol(token) => match token.to_string().as_str() {
-            "nil" => Expr::Nil,
-            "true" => Expr::Boolean(true),
-            "false" => Expr::Boolean(false),
-            "..." => Expr::VarArgs,
-            other => Expr::Name(other.to_string()),
-        },
-        ast::Expression::BinaryOperator { lhs, binop, rhs } => Expr::BinaryOp(
-            Box::new(to_expr(lhs, annotations)),
-            binop.token().to_string(),
-            Box::new(to_expr(rhs, annotations)),
-        ),
-        ast::Expression::UnaryOperator { unop, expression } => Expr::UnaryOp(
-            unop.token().to_string(),
-            Box::new(to_expr(expression, annotations)),
-        ),
-        ast::Expression::Parentheses { expression, .. } => {
-            Expr::Parentheses(Box::new(to_expr(expression, annotations)))
+        ast::Expression::Number(token) => Expr::new(ExprKind::Number(token.to_string()), range),
+        ast::Expression::String(token) => Expr::new(ExprKind::String(token.to_string()), range),
+        ast::Expression::Symbol(token) => {
+            let symbol = token.to_string();
+            match symbol.trim() {
+                "nil" => Expr::new(ExprKind::Nil, range),
+                "true" => Expr::new(ExprKind::Boolean(true), range),
+                "false" => Expr::new(ExprKind::Boolean(false), range),
+                "..." => Expr::new(ExprKind::VarArgs, range),
+                other => Expr::new(
+                    ExprKind::Name(Identifier::new(other.to_string(), range)),
+                    range,
+                ),
+            }
         }
-        ast::Expression::TableConstructor(table) => {
-            Expr::TableConstructor(to_table_fields(table, annotations))
+        ast::Expression::BinaryOperator { lhs, binop, rhs } => {
+            let left = to_expr(lhs, annotations);
+            let right = to_expr(rhs, annotations);
+            let operator = Operator {
+                symbol: binop.token().to_string().trim().to_string(),
+                range: token_range(binop),
+            };
+            Expr::new(
+                ExprKind::BinaryOp {
+                    left: Box::new(left),
+                    operator,
+                    right: Box::new(right),
+                },
+                range,
+            )
         }
+        ast::Expression::UnaryOperator { unop, expression } => {
+            let expr = to_expr(expression, annotations);
+            let operator = Operator {
+                symbol: unop.token().to_string().trim().to_string(),
+                range: token_range(unop),
+            };
+            Expr::new(
+                ExprKind::UnaryOp {
+                    operator,
+                    expression: Box::new(expr),
+                },
+                range,
+            )
+        }
+        ast::Expression::Parentheses { expression, .. } => Expr::new(
+            ExprKind::Parentheses(Box::new(to_expr(expression, annotations))),
+            range,
+        ),
+        ast::Expression::TableConstructor(table) => Expr::new(
+            ExprKind::TableConstructor(to_table_fields(table, annotations)),
+            range,
+        ),
         ast::Expression::FunctionCall(call) => to_function_call(call, annotations),
         ast::Expression::Var(var) => to_expr_var(var, annotations),
-        ast::Expression::Function(function) => Expr::Function(FunctionExpr {
-            params: to_function_params(function.body().parameters()),
-            body: to_block(function.body().block(), annotations),
-        }),
-        _ => Expr::Unknown(token_range(expr)),
+        ast::Expression::Function(function) => Expr::new(
+            ExprKind::Function(FunctionExpr {
+                params: to_function_params(function.body().parameters()),
+                body: to_block(function.body().block(), annotations),
+                range: token_range(function),
+            }),
+            range,
+        ),
+        _ => Expr::new(ExprKind::Unknown, range),
     }
 }
 
 fn to_expr_var(var: &ast::Var, annotations: &AnnotationIndex) -> Expr {
+    let range = token_range(var);
     match var {
-        ast::Var::Name(token) => Expr::Name(token.token().to_string()),
+        ast::Var::Name(token) => Expr::new(ExprKind::Name(identifier_from_token_ref(token)), range),
         ast::Var::Expression(expr) => to_prefixed_expression(expr, annotations),
-        _ => Expr::Unknown(token_range(var)),
+        _ => Expr::new(ExprKind::Unknown, range),
     }
 }
 
@@ -461,44 +583,88 @@ where
     I: Iterator<Item = &'a ast::Suffix>,
 {
     let mut current = match prefix {
-        ast::Prefix::Name(token) => Expr::Name(token.token().to_string()),
+        ast::Prefix::Name(token) => Expr::new(
+            ExprKind::Name(identifier_from_token(token.token())),
+            token_range(token),
+        ),
         ast::Prefix::Expression(expr) => to_expr(expr, annotations),
-        _ => Expr::Unknown(token_range(prefix)),
+        _ => Expr::new(ExprKind::Unknown, token_range(prefix)),
     };
 
     for suffix in suffixes {
-        current = apply_suffix(current, suffix, annotations);
+        let prev = current;
+        let prev_range = prev.range;
+        current = match suffix {
+            ast::Suffix::Index(index) => match index {
+                ast::Index::Dot { name, .. } => {
+                    let ident = identifier_from_token(name.token());
+                    let range = merge_ranges(prev_range, token_range(index));
+                    Expr::new(
+                        ExprKind::Field {
+                            target: Box::new(prev),
+                            name: ident,
+                        },
+                        range,
+                    )
+                }
+                ast::Index::Brackets {
+                    expression: key, ..
+                } => {
+                    let key_expr = to_expr(key, annotations);
+                    let range = merge_ranges(prev_range, token_range(index));
+                    Expr::new(
+                        ExprKind::Index {
+                            target: Box::new(prev),
+                            key: Box::new(key_expr),
+                        },
+                        range,
+                    )
+                }
+                _ => Expr::new(
+                    ExprKind::Unknown,
+                    merge_ranges(prev_range, token_range(index)),
+                ),
+            },
+            ast::Suffix::Call(call) => match call {
+                ast::Call::AnonymousCall(args) => {
+                    let args = to_call_args(args, annotations);
+                    let range = merge_ranges(prev_range, token_range(call));
+                    Expr::new(
+                        ExprKind::Call(CallExpr {
+                            function: Box::new(prev),
+                            args,
+                            range,
+                        }),
+                        range,
+                    )
+                }
+                ast::Call::MethodCall(method) => {
+                    let args = to_call_args(method.args(), annotations);
+                    let method_ident = identifier_from_token(method.name().token());
+                    let range = merge_ranges(prev_range, token_range(method));
+                    Expr::new(
+                        ExprKind::MethodCall(MethodCallExpr {
+                            receiver: Box::new(prev),
+                            method: method_ident,
+                            args,
+                            range,
+                        }),
+                        range,
+                    )
+                }
+                _ => Expr::new(
+                    ExprKind::Unknown,
+                    merge_ranges(prev_range, token_range(call)),
+                ),
+            },
+            _ => Expr::new(
+                ExprKind::Unknown,
+                merge_ranges(prev_range, token_range(suffix)),
+            ),
+        };
     }
 
     current
-}
-
-fn apply_suffix(expr: Expr, suffix: &ast::Suffix, annotations: &AnnotationIndex) -> Expr {
-    match suffix {
-        ast::Suffix::Index(index) => match index {
-            ast::Index::Dot { name, .. } => Expr::Field(Box::new(expr), name.token().to_string()),
-            ast::Index::Brackets {
-                expression: key, ..
-            } => {
-                let key_expr = to_expr(key, annotations);
-                Expr::Index(Box::new(expr), Box::new(key_expr))
-            }
-            _ => Expr::Unknown(token_range(index)),
-        },
-        ast::Suffix::Call(call) => match call {
-            ast::Call::AnonymousCall(args) => Expr::Call(Box::new(CallExpr {
-                function: Box::new(expr),
-                args: to_call_args(args, annotations),
-            })),
-            ast::Call::MethodCall(method) => Expr::MethodCall(Box::new(MethodCallExpr {
-                receiver: Box::new(expr),
-                method: method.name().token().to_string(),
-                args: to_call_args(method.args(), annotations),
-            })),
-            _ => Expr::Unknown(token_range(call)),
-        },
-        _ => Expr::Unknown(token_range(suffix)),
-    }
 }
 
 fn to_call_args(args: &ast::FunctionArgs, annotations: &AnnotationIndex) -> CallArgs {
@@ -525,16 +691,24 @@ fn to_table_fields(
         .fields()
         .pairs()
         .map(|pair| match pair.value() {
-            ast::Field::NoKey(expr) => TableField::Array(to_expr(expr, annotations)),
+            ast::Field::NoKey(expr) => TableField::Array {
+                value: to_expr(expr, annotations),
+                range: token_range(expr),
+            },
             ast::Field::NameKey { key, value, .. } => TableField::NameValue {
-                name: key.token().to_string(),
+                name: identifier_from_token(key.token()),
                 value: to_expr(value, annotations),
+                range: token_range(pair.value()),
             },
             ast::Field::ExpressionKey { key, value, .. } => TableField::ExpressionKey {
                 key: to_expr(key, annotations),
                 value: to_expr(value, annotations),
+                range: token_range(pair.value()),
             },
-            _ => TableField::Array(Expr::Unknown(token_range(pair.value()))),
+            _ => TableField::Array {
+                value: Expr::new(ExprKind::Unknown, token_range(pair.value())),
+                range: token_range(pair.value()),
+            },
         })
         .collect()
 }
@@ -543,9 +717,11 @@ fn to_function_name(name: &ast::FunctionName) -> FunctionName {
     let path = name
         .names()
         .iter()
-        .map(|token| token.token().to_string())
+        .map(|token| identifier_from_token(token.token()))
         .collect();
-    let method = name.method_name().map(|token| token.token().to_string());
+    let method = name
+        .method_name()
+        .map(|token| identifier_from_token(token.token()));
     FunctionName { path, method }
 }
 
@@ -554,7 +730,7 @@ fn to_function_params(parameters: &Punctuated<ast::Parameter>) -> Vec<FunctionPa
         .iter()
         .map(|param| match param {
             ast::Parameter::Name(token) => FunctionParam {
-                name: Some(token.token().to_string()),
+                name: Some(identifier_from_token_ref(token)),
                 is_vararg: false,
             },
             ast::Parameter::Ellipsis(_) => FunctionParam {
@@ -570,37 +746,70 @@ fn to_function_params(parameters: &Punctuated<ast::Parameter>) -> Vec<FunctionPa
 }
 
 fn function_annotations(
-    line: usize,
-    annotations: &AnnotationIndex,
-) -> (HashMap<String, AnnotatedType>, Vec<AnnotatedType>) {
+    annotations: Vec<Annotation>,
+) -> (
+    HashMap<String, AnnotatedType>,
+    Vec<AnnotatedType>,
+    Vec<Annotation>,
+) {
     let mut params = HashMap::new();
     let mut returns = Vec::new();
+    let mut leftover = Vec::new();
 
-    if let Some(list) = annotations.by_line.get(&line) {
-        for ann in list.iter() {
-            match ann.usage {
-                AnnotationUsage::Param => {
-                    if let Some(name) = &ann.name {
-                        params.insert(name.clone(), ann.ty.clone());
-                    }
+    for ann in annotations {
+        match ann.usage {
+            AnnotationUsage::Param => {
+                if let Some(name) = ann.name.clone() {
+                    params.insert(name, ann.ty.clone());
                 }
-                AnnotationUsage::Return => returns.push(ann.ty.clone()),
-                AnnotationUsage::Type => {}
             }
+            AnnotationUsage::Return => returns.push(ann.ty.clone()),
+            AnnotationUsage::Type => leftover.push(ann.clone()),
         }
     }
 
-    (params, returns)
+    (params, returns, leftover)
+}
+
+fn identifier_from_token(token: &Token) -> Identifier {
+    let start = TextPosition::from(token.start_position());
+    let end = TextPosition::from(token.end_position());
+    Identifier::new(token.to_string(), TextRange { start, end })
+}
+
+fn identifier_from_token_ref(token: &TokenReference) -> Identifier {
+    identifier_from_token(token.token())
+}
+
+fn merge_ranges(a: TextRange, b: TextRange) -> TextRange {
+    TextRange {
+        start: min_position(a.start, b.start),
+        end: max_position(a.end, b.end),
+    }
+}
+
+fn min_position(a: TextPosition, b: TextPosition) -> TextPosition {
+    if (a.line, a.character) <= (b.line, b.character) {
+        a
+    } else {
+        b
+    }
+}
+
+fn max_position(a: TextPosition, b: TextPosition) -> TextPosition {
+    if (a.line, a.character) >= (b.line, b.character) {
+        a
+    } else {
+        b
+    }
 }
 
 fn token_range<T: Node>(node: &T) -> TextRange {
     let (start, end) = (node.start_position(), node.end_position());
-    let start = start
-        .map(Into::into)
-        .unwrap_or(crate::diagnostics::TextPosition {
-            line: 0,
-            character: 0,
-        });
+    let start = start.map(Into::into).unwrap_or(TextPosition {
+        line: 0,
+        character: 0,
+    });
     let end = end.map(Into::into).unwrap_or(start);
     TextRange { start, end }
 }
@@ -641,20 +850,20 @@ mod tests {
         };
 
         assert_eq!(
-            func.name.path,
+            func.name
+                .path
+                .iter()
+                .map(|id| id.name.clone())
+                .collect::<Vec<_>>(),
             vec!["mod".to_string(), "example".to_string()]
         );
-        assert_eq!(func.name.method.as_deref(), Some("run"));
-        assert_eq!(func.params.len(), 2);
         assert_eq!(
-            func.params[0],
-            FunctionParam {
-                name: Some("a".into()),
-                is_vararg: false
-            }
+            func.name.method.as_ref().map(|id| id.name.clone()),
+            Some("run".into())
         );
-        assert_eq!(func.returns.len(), 1);
+        assert_eq!(func.params.len(), 2);
         assert!(func.param_types.contains_key("a"));
+        assert_eq!(func.returns.len(), 1);
         assert!(matches!(func.body.stmts.last(), Some(Stmt::Return(_))));
     }
 
@@ -759,15 +968,16 @@ mod tests {
         let Stmt::LocalAssign(local) = &program.block.stmts[0] else {
             panic!("expected local assignment");
         };
-        assert_eq!(local.names, vec!["mapper".to_string()]);
-        let Expr::Function(function_expr) = &local.values[0] else {
+        assert_eq!(local.names.len(), 1);
+        assert_eq!(local.names[0].name, "mapper");
+        let ExprKind::Function(function_expr) = &local.values[0].kind else {
             panic!("expected anonymous function");
         };
         assert_eq!(function_expr.params.len(), 1);
         let Stmt::Return(return_stmt) = &function_expr.body.stmts[0] else {
             panic!("expected return inside function body");
         };
-        let Expr::TableConstructor(fields) = &return_stmt.values[0] else {
+        let ExprKind::TableConstructor(fields) = &return_stmt.values[0].kind else {
             panic!("expected table constructor");
         };
         assert_eq!(fields.len(), 2);

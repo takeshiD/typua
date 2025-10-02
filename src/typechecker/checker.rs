@@ -5,11 +5,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use full_moon::{
-    self, Error as FullMoonError, ast,
-    node::Node,
-    tokenizer::{Position, Symbol, TokenReference, TokenType},
-};
+use full_moon::{self, Error as FullMoonError, ast};
 
 // use crate::typing::{infer::expr as infer_expr, types as tty};
 use crate::{
@@ -20,6 +16,7 @@ use crate::{
     workspace,
 };
 
+use super::typed_ast;
 use super::types::{
     AnnotatedType, Annotation, AnnotationIndex, AnnotationUsage, OperandSide, TypeKind,
     TypeRegistry,
@@ -110,19 +107,15 @@ pub fn check_ast_with_registry(
         local_registry
     };
 
-    // Build TypedAST for future incremental analysis pipeline.
-    // 現状の型検査はfull_moon ASTに対して行うが、
-    // 仕様に基づきTypedASTを生成しておく（将来的にこちらに切替）。
-    let _typed = crate::typechecker::typed_ast::build_typed_ast(source, ast, &annotations);
+    let typed = crate::typechecker::typed_ast::build_typed_ast(source, ast, &annotations);
 
-    TypeChecker::new(path, annotations, registry).check(ast)
+    TypeChecker::new(path, registry).check_program(&typed)
 }
 
 struct TypeChecker<'a> {
     path: &'a Path,
     diagnostics: Vec<Diagnostic>,
     scopes: Vec<HashMap<String, VariableEntry>>,
-    annotations: AnnotationIndex,
     type_registry: TypeRegistry,
     return_expectations: Vec<Vec<AnnotatedType>>,
     type_info: HashMap<DocumentPosition, TypeInfo>,
@@ -149,21 +142,20 @@ enum NarrowRule {
 }
 
 impl<'a> TypeChecker<'a> {
-    fn new(path: &'a Path, annotations: AnnotationIndex, type_registry: TypeRegistry) -> Self {
+    fn new(path: &'a Path, type_registry: TypeRegistry) -> Self {
         Self {
             path,
             diagnostics: Vec::new(),
             scopes: Vec::new(),
-            annotations,
             type_registry,
             return_expectations: Vec::new(),
             type_info: HashMap::new(),
         }
     }
 
-    fn check(mut self, ast: &ast::Ast) -> CheckResult {
+    fn check_program(mut self, program: &typed_ast::Program) -> CheckResult {
         self.scopes.push(HashMap::new());
-        self.check_block(ast.nodes());
+        self.check_block(&program.block);
         self.scopes.pop();
         CheckResult {
             diagnostics: self.diagnostics,
@@ -171,13 +163,9 @@ impl<'a> TypeChecker<'a> {
         }
     }
 
-    fn check_block(&mut self, block: &ast::Block) {
-        for stmt in block.stmts() {
+    fn check_block(&mut self, block: &typed_ast::Block) {
+        for stmt in &block.stmts {
             self.check_stmt(stmt);
-        }
-
-        if let Some(last_stmt) = block.last_stmt() {
-            self.check_last_stmt(last_stmt);
         }
     }
 
@@ -208,47 +196,13 @@ impl<'a> TypeChecker<'a> {
         self.scopes.pop().unwrap_or_default()
     }
 
-    fn take_line_annotations(&mut self, line: usize) -> Vec<Annotation> {
-        self.annotations.take(line)
-    }
-
-    fn take_class_hints(&mut self, line: usize) -> Vec<String> {
-        self.annotations.take_class_hint(line)
-    }
-
-    fn extract_function_annotations(
-        annotations: &mut Vec<Annotation>,
-    ) -> (HashMap<String, AnnotatedType>, Vec<AnnotatedType>) {
-        let mut params = HashMap::new();
-        let mut returns = Vec::new();
-        let mut index = 0;
-        while index < annotations.len() {
-            match annotations[index].usage {
-                AnnotationUsage::Param => {
-                    if let Some(name) = annotations[index].name.clone() {
-                        params.insert(name, annotations[index].ty.clone());
-                    }
-                    annotations.remove(index);
-                }
-                AnnotationUsage::Return => {
-                    returns.push(annotations[index].ty.clone());
-                    annotations.remove(index);
-                }
-                _ => {
-                    index += 1;
-                }
-            }
-        }
-        (params, returns)
-    }
-
     fn apply_type_annotation(
         &mut self,
-        name: &str,
-        token: &TokenReference,
+        identifier: &typed_ast::Identifier,
         inferred: TypeKind,
         annotations: &mut Vec<Annotation>,
     ) -> (TypeKind, bool) {
+        let name = identifier.name.as_str();
         let idx = annotations
             .iter()
             .position(|annotation| {
@@ -270,12 +224,16 @@ impl<'a> TypeChecker<'a> {
                         "variable '{name}' is annotated as type {} but inferred type is {}",
                         annotation.ty.raw, inferred
                     );
-                    self.push_diagnostic(token, message, Some(DiagnosticCode::AssignTypeMismatch));
+                    self.push_diagnostic(
+                        Some(identifier.range),
+                        message,
+                        Some(DiagnosticCode::AssignTypeMismatch),
+                    );
                 }
-                self.record_type(token, expected.clone());
+                self.record_type(identifier.range, expected.clone());
                 (expected, annotated)
             } else {
-                self.record_type(token, inferred.clone());
+                self.record_type(identifier.range, inferred.clone());
                 (inferred, annotated)
             }
         } else {
@@ -283,7 +241,7 @@ impl<'a> TypeChecker<'a> {
                 .lookup_entry(name)
                 .map(|entry| entry.annotated)
                 .unwrap_or(false);
-            self.record_type(token, inferred.clone());
+            self.record_type(identifier.range, inferred.clone());
             (inferred, annotated)
         }
     }
@@ -295,36 +253,33 @@ impl<'a> TypeChecker<'a> {
         annotation.kind.clone()
     }
 
-    fn check_stmt(&mut self, stmt: &ast::Stmt) {
+    fn check_stmt(&mut self, stmt: &typed_ast::Stmt) {
         match stmt {
-            ast::Stmt::LocalAssignment(local) => self.check_local_assignment(local),
-            ast::Stmt::Assignment(assignment) => self.check_assignment(assignment),
-            ast::Stmt::LocalFunction(local_fn) => self.check_local_function(local_fn),
-            ast::Stmt::FunctionDeclaration(function) => self.check_function_declaration(function),
-            ast::Stmt::Do(do_block) => {
-                self.with_new_scope(|checker| checker.check_block(do_block.block()))
+            typed_ast::Stmt::LocalAssign(local) => self.check_local_assignment(local),
+            typed_ast::Stmt::Assign(assign) => self.check_assignment(assign),
+            typed_ast::Stmt::LocalFunction(local_fn) => self.check_local_function(local_fn),
+            typed_ast::Stmt::Function(function) => self.check_function_declaration(function),
+            typed_ast::Stmt::Do(do_block) => {
+                self.with_new_scope(|checker| checker.check_block(&do_block.block))
             }
-            ast::Stmt::If(if_stmt) => self.check_if(if_stmt),
-            ast::Stmt::While(while_stmt) => self.check_while(while_stmt),
-            ast::Stmt::Repeat(repeat_stmt) => self.check_repeat(repeat_stmt),
-            ast::Stmt::NumericFor(numeric_for) => self.check_numeric_for(numeric_for),
-            ast::Stmt::GenericFor(generic_for) => self.check_generic_for(generic_for),
-            _ => {}
+            typed_ast::Stmt::If(if_stmt) => self.check_if(if_stmt),
+            typed_ast::Stmt::While(while_stmt) => self.check_while(while_stmt),
+            typed_ast::Stmt::Repeat(repeat_stmt) => self.check_repeat(repeat_stmt),
+            typed_ast::Stmt::NumericFor(numeric_for) => self.check_numeric_for(numeric_for),
+            typed_ast::Stmt::GenericFor(generic_for) => self.check_generic_for(generic_for),
+            typed_ast::Stmt::Return(ret) => self.validate_return(ret),
+            typed_ast::Stmt::FunctionCall(_)
+            | typed_ast::Stmt::Break(_)
+            | typed_ast::Stmt::Unknown(_) => {}
         }
     }
 
-    fn check_last_stmt(&mut self, last_stmt: &ast::LastStmt) {
-        if let ast::LastStmt::Return(ret) = last_stmt {
-            self.validate_return(ret);
-        }
-    }
-
-    fn validate_return(&mut self, ret: &ast::Return) {
-        let mut expr_info: Vec<(TypeKind, &ast::Expression)> = Vec::new();
-        for pair in ret.returns().pairs() {
-            let ty = self.infer_expression(pair.value());
-            expr_info.push((ty, pair.value()));
-        }
+    fn validate_return(&mut self, ret: &typed_ast::ReturnStmt) {
+        let expr_info: Vec<TypeKind> = ret
+            .values
+            .iter()
+            .map(|expr| self.infer_expression(expr))
+            .collect();
 
         let Some(expectations) = self.return_expectations.last() else {
             return;
@@ -339,7 +294,7 @@ impl<'a> TypeChecker<'a> {
                 "function returns {actual_len} value(s) but only {expected_len} annotated via @return"
             );
             self.push_diagnostic(
-                ret.token(),
+                Some(ret.range),
                 message,
                 Some(DiagnosticCode::ReturnTypeMismatch),
             );
@@ -350,7 +305,7 @@ impl<'a> TypeChecker<'a> {
                 "function annotated to return {expected_len} value(s) but this return statement provides {actual_len}"
             );
             self.push_diagnostic(
-                ret.token(),
+                Some(ret.range),
                 message,
                 Some(DiagnosticCode::ReturnTypeMismatch),
             );
@@ -361,7 +316,7 @@ impl<'a> TypeChecker<'a> {
                 break;
             }
 
-            let actual = expr_info[idx].0.clone();
+            let actual = expr_info[idx].clone();
             if let Some(expected) = self.resolve_annotation_kind(annotation)
                 && !expected.matches(&actual)
             {
@@ -372,7 +327,7 @@ impl<'a> TypeChecker<'a> {
                     actual
                 );
                 self.push_diagnostic(
-                    ret.token(),
+                    Some(ret.range),
                     message,
                     Some(DiagnosticCode::ReturnTypeMismatch),
                 );
@@ -383,25 +338,21 @@ impl<'a> TypeChecker<'a> {
     fn validate_field_assignment(
         &mut self,
         class_name: &str,
-        field_token: &TokenReference,
+        field: &typed_ast::Identifier,
         value_type: &TypeKind,
     ) {
-        let Some(field_name) = token_identifier(field_token) else {
-            return;
-        };
-
-        if let Some(annotation) = self.type_registry.field_annotation(class_name, &field_name) {
+        if let Some(annotation) = self.type_registry.field_annotation(class_name, &field.name) {
             if let Some(expected) = self.resolve_annotation_kind(annotation) {
                 let expected_clone = expected.clone();
                 let annotation_message = annotation.raw.clone();
-                self.record_type(field_token, expected_clone);
+                self.record_type(field.range, expected_clone);
                 if !expected.matches(value_type) {
                     let message = format!(
-                        "field '{field_name}' in class {class_name} expects type {} but inferred type is {}",
-                        annotation_message, value_type
+                        "field '{}' in class {class_name} expects type {} but inferred type is {}",
+                        field.name, annotation_message, value_type
                     );
                     self.push_diagnostic(
-                        field_token,
+                        Some(field.range),
                         message,
                         Some(DiagnosticCode::ParamTypeMismatch),
                     );
@@ -410,82 +361,69 @@ impl<'a> TypeChecker<'a> {
             }
         } else if self.type_registry.is_exact(class_name) {
             let message = format!(
-                "class {class_name} is declared exact; field '{field_name}' is not defined"
+                "class {class_name} is declared exact; field '{}' is not defined",
+                field.name
             );
-            self.push_diagnostic(field_token, message, Some(DiagnosticCode::UndefinedField));
+            self.push_diagnostic(
+                Some(field.range),
+                message,
+                Some(DiagnosticCode::UndefinedField),
+            );
             return;
         }
 
-        self.record_type(field_token, value_type.clone());
+        self.record_type(field.range, value_type.clone());
     }
 
-    fn check_local_assignment(&mut self, assignment: &ast::LocalAssignment) {
-        let line = assignment.local_token().token().start_position().line();
-        let mut annotations = self.take_line_annotations(line);
-        let mut class_hints: VecDeque<String> = VecDeque::from(self.take_class_hints(line));
+    fn check_local_assignment(&mut self, assignment: &typed_ast::LocalAssign) {
+        let mut annotations = assignment.annotations.clone();
+        let mut class_hints: VecDeque<String> = VecDeque::from(assignment.class_hints.clone());
 
         let expr_types: Vec<TypeKind> = assignment
-            .expressions()
-            .pairs()
-            .map(|pair| self.infer_expression(pair.value()))
+            .values
+            .iter()
+            .map(|expr| self.infer_expression(expr))
             .collect();
 
-        for (index, pair) in assignment.names().pairs().enumerate() {
-            let token = pair.value();
-            if let Some(name) = token_identifier(token) {
-                let inferred = expr_types.get(index).cloned().unwrap_or(TypeKind::Nil);
-                let is_table_literal = matches!(inferred, TypeKind::Table);
-                let before_len = annotations.len();
-                let (mut ty, mut annotated) =
-                    self.apply_type_annotation(&name, token, inferred, &mut annotations);
-                let used_annotation = before_len != annotations.len();
+        for (index, identifier) in assignment.names.iter().enumerate() {
+            let inferred = expr_types.get(index).cloned().unwrap_or(TypeKind::Nil);
+            let is_table_literal = matches!(inferred, TypeKind::Table);
+            let before_len = annotations.len();
+            let (mut ty, mut annotated) =
+                self.apply_type_annotation(identifier, inferred, &mut annotations);
+            let used_annotation = before_len != annotations.len();
 
-                if !used_annotation
-                    && is_table_literal
-                    && let Some(class_name) = class_hints.pop_front()
-                {
-                    ty = TypeKind::Custom(class_name);
-                    annotated = true;
-                }
-
-                self.assign_local(&name, token, ty, annotated);
+            if !used_annotation
+                && is_table_literal
+                && let Some(class_name) = class_hints.pop_front()
+            {
+                ty = TypeKind::Custom(class_name);
+                annotated = true;
             }
+
+            self.assign_local(&identifier.name, identifier.range, ty, annotated);
         }
     }
 
-    fn check_assignment(&mut self, assignment: &ast::Assignment) {
-        let line = assignment
-            .variables()
-            .pairs()
-            .next()
-            .and_then(|pair| pair.value().start_position())
-            .map(|position| position.line())
-            .unwrap_or(0);
-        let mut annotations = if line > 0 {
-            self.take_line_annotations(line)
-        } else {
-            Vec::new()
-        };
-        let mut class_hints = if line > 0 {
-            VecDeque::from(self.take_class_hints(line))
-        } else {
-            VecDeque::new()
-        };
+    fn check_assignment(&mut self, assignment: &typed_ast::Assign) {
+        let mut annotations = assignment.annotations.clone();
+        let mut class_hints: VecDeque<String> = VecDeque::from(assignment.class_hints.clone());
 
         let expr_types: Vec<TypeKind> = assignment
-            .expressions()
-            .pairs()
-            .map(|pair| self.infer_expression(pair.value()))
+            .values
+            .iter()
+            .map(|expr| self.infer_expression(expr))
             .collect();
 
-        for (index, pair) in assignment.variables().pairs().enumerate() {
-            if let ast::Var::Name(token) = pair.value() {
-                if let Some(name) = token_identifier(token) {
-                    let inferred = expr_types.get(index).cloned().unwrap_or(TypeKind::Nil);
+        for (index, target) in assignment.targets.iter().enumerate() {
+            let inferred = expr_types.get(index).cloned().unwrap_or(TypeKind::Nil);
+
+            match &target.kind {
+                typed_ast::ExprKind::Name(identifier) => {
                     let is_table_literal = matches!(inferred, TypeKind::Table);
                     let before_len = annotations.len();
                     let (mut ty, mut annotated) =
-                        self.apply_type_annotation(&name, token, inferred, &mut annotations);
+                        self.apply_type_annotation(identifier, inferred, &mut annotations);
                     let used_annotation = before_len != annotations.len();
 
                     if !used_annotation
@@ -496,88 +434,80 @@ impl<'a> TypeChecker<'a> {
                         annotated = true;
                     }
 
-                    self.assign_nonlocal(&name, token, ty, annotated);
+                    self.assign_nonlocal(&identifier.name, identifier.range, ty, annotated);
                 }
-            } else if let Some((base_token, field_token)) = extract_field_assignment(pair.value())
-                && let Some(base_name) = token_identifier(base_token)
-                && let Some(TypeKind::Custom(class_name)) = self.lookup(&base_name)
-            {
-                let value_type = expr_types.get(index).cloned().unwrap_or(TypeKind::Unknown);
-                self.validate_field_assignment(&class_name, field_token, &value_type);
+                typed_ast::ExprKind::Field { target: base, name } => {
+                    if let Some(base_name) = expression_identifier(base)
+                        && let Some(TypeKind::Custom(class_name)) = self.lookup(&base_name)
+                    {
+                        let value_type =
+                            expr_types.get(index).cloned().unwrap_or(TypeKind::Unknown);
+                        self.validate_field_assignment(&class_name, name, &value_type);
+                    }
+                }
+                _ => {}
             }
         }
     }
 
-    fn check_local_function(&mut self, local_fn: &ast::LocalFunction) {
-        let line = local_fn.local_token().token().start_position().line();
-        let mut annotations = self.take_line_annotations(line);
-        let (mut param_annotations, return_annotations) =
-            TypeChecker::extract_function_annotations(&mut annotations);
+    fn check_local_function(&mut self, local_fn: &typed_ast::LocalFunction) {
+        let mut annotations = local_fn.annotations.clone();
+        let mut param_annotations = local_fn.param_types.clone();
 
-        let name_token = local_fn.name();
-        if let Some(name) = token_identifier(name_token) {
-            let inferred = TypeKind::Function;
-            let (ty, annotated) =
-                self.apply_type_annotation(&name, name_token, inferred, &mut annotations);
-            self.assign_local(&name, name_token, ty, annotated);
-            self.clear_type_info(name_token);
-        }
+        let inferred = TypeKind::Function;
+        let (ty, annotated) =
+            self.apply_type_annotation(&local_fn.name, inferred, &mut annotations);
+        self.assign_local(&local_fn.name.name, local_fn.name.range, ty, annotated);
+        self.clear_type_info(local_fn.name.range);
 
-        let enforce_returns = !return_annotations.is_empty();
+        let enforce_returns = !local_fn.returns.is_empty();
         if enforce_returns {
-            self.return_expectations.push(return_annotations);
+            self.return_expectations.push(local_fn.returns.clone());
         }
         self.with_new_scope(|checker| {
-            checker.bind_function_parameters(local_fn.body(), &mut param_annotations);
-            checker.check_block(local_fn.body().block());
+            checker.bind_function_parameters(&local_fn.params, &mut param_annotations);
+            checker.check_block(&local_fn.body);
         });
         if enforce_returns {
             self.return_expectations.pop();
         }
     }
 
-    fn check_function_declaration(&mut self, function: &ast::FunctionDeclaration) {
-        let line = function.function_token().token().start_position().line();
-        let mut annotations = self.take_line_annotations(line);
-        let (mut param_annotations, return_annotations) =
-            TypeChecker::extract_function_annotations(&mut annotations);
+    fn check_function_declaration(&mut self, function: &typed_ast::Function) {
+        let mut annotations = function.annotations.clone();
+        let mut param_annotations = function.param_types.clone();
 
-        if let Some(token) = target_function_name(function.name())
-            && let Some(name) = token_identifier(token)
-        {
+        if let Some(identifier) = function.name.last_component() {
             let inferred = TypeKind::Function;
             let (ty, annotated) =
-                self.apply_type_annotation(&name, token, inferred, &mut annotations);
-            self.assign_nonlocal(&name, token, ty, annotated);
-            self.clear_type_info(token);
+                self.apply_type_annotation(identifier, inferred, &mut annotations);
+            self.assign_nonlocal(&identifier.name, identifier.range, ty, annotated);
+            self.clear_type_info(identifier.range);
         }
 
-        let enforce_returns = !return_annotations.is_empty();
+        let enforce_returns = !function.returns.is_empty();
         if enforce_returns {
-            self.return_expectations.push(return_annotations);
+            self.return_expectations.push(function.returns.clone());
         }
         self.with_new_scope(|checker| {
-            checker.bind_function_parameters(function.body(), &mut param_annotations);
-            checker.check_block(function.body().block());
+            checker.bind_function_parameters(&function.params, &mut param_annotations);
+            checker.check_block(&function.body);
         });
         if enforce_returns {
             self.return_expectations.pop();
         }
     }
 
-    fn check_if(&mut self, if_stmt: &ast::If) {
+    fn check_if(&mut self, if_stmt: &typed_ast::IfStmt) {
         let base_scope = self.current_scope_snapshot();
         let mut branch_scopes: Vec<HashMap<String, VariableEntry>> = Vec::new();
         let mut remaining_env = base_scope.clone();
 
-        let mut branches: Vec<(Option<&ast::Expression>, &ast::Block)> = Vec::new();
-        branches.push((Some(if_stmt.condition()), if_stmt.block()));
-        if let Some(elseifs) = if_stmt.else_if() {
-            for elseif in elseifs {
-                branches.push((Some(elseif.condition()), elseif.block()));
-            }
+        let mut branches: Vec<(Option<&typed_ast::Expr>, &typed_ast::Block)> = Vec::new();
+        for branch in &if_stmt.branches {
+            branches.push((Some(&branch.condition), &branch.block));
         }
-        if let Some(block) = if_stmt.else_block() {
+        if let Some(block) = &if_stmt.else_branch {
             branches.push((None, block));
         }
 
@@ -599,7 +529,7 @@ impl<'a> TypeChecker<'a> {
             branch_scopes.push(scope_result);
         }
 
-        if if_stmt.else_block().is_none() {
+        if if_stmt.else_branch.is_none() {
             branch_scopes.push(remaining_env);
         }
 
@@ -607,98 +537,100 @@ impl<'a> TypeChecker<'a> {
         self.replace_current_scope(merged);
     }
 
-    fn check_while(&mut self, while_stmt: &ast::While) {
-        self.infer_expression(while_stmt.condition());
+    fn check_while(&mut self, while_stmt: &typed_ast::WhileStmt) {
+        self.infer_expression(&while_stmt.condition);
         let base_scope = self.current_scope_snapshot();
-        let effect = Self::analyze_condition(while_stmt.condition());
+        let effect = Self::analyze_condition(&while_stmt.condition);
         let mut loop_env = base_scope.clone();
         Self::apply_narrowing(&mut loop_env, &effect.truthy);
 
         self.push_scope_with(loop_env);
-        self.check_block(while_stmt.block());
+        self.check_block(&while_stmt.block);
         let loop_scope = self.pop_scope_map();
 
         let merged = Self::merge_branch_scopes(&base_scope, vec![loop_scope, base_scope.clone()]);
         self.replace_current_scope(merged);
     }
 
-    fn check_repeat(&mut self, repeat_stmt: &ast::Repeat) {
+    fn check_repeat(&mut self, repeat_stmt: &typed_ast::RepeatStmt) {
         let base_scope = self.current_scope_snapshot();
         self.push_scope_with(base_scope.clone());
-        self.check_block(repeat_stmt.block());
+        self.check_block(&repeat_stmt.block);
         let body_scope = self.pop_scope_map();
-        self.infer_expression(repeat_stmt.until());
+        self.infer_expression(&repeat_stmt.condition);
 
         let merged = Self::merge_branch_scopes(&base_scope, vec![body_scope, base_scope.clone()]);
         self.replace_current_scope(merged);
     }
 
-    fn check_numeric_for(&mut self, numeric_for: &ast::NumericFor) {
-        self.infer_expression(numeric_for.start());
-        self.infer_expression(numeric_for.end());
-        if let Some(step) = numeric_for.step() {
+    fn check_numeric_for(&mut self, numeric_for: &typed_ast::NumericForStmt) {
+        self.infer_expression(&numeric_for.start);
+        self.infer_expression(&numeric_for.end);
+        if let Some(step) = &numeric_for.step {
             self.infer_expression(step);
         }
 
         self.with_new_scope(|checker| {
-            if let Some(name) = token_identifier(numeric_for.index_variable()) {
-                checker.assign_local(&name, numeric_for.index_variable(), TypeKind::Number, false);
-            }
-            checker.check_block(numeric_for.block());
+            checker.assign_local(
+                &numeric_for.index.name,
+                numeric_for.index.range,
+                TypeKind::Number,
+                false,
+            );
+            checker.check_block(&numeric_for.body);
         });
     }
 
-    fn check_generic_for(&mut self, generic_for: &ast::GenericFor) {
-        for pair in generic_for.expressions().pairs() {
-            self.infer_expression(pair.value());
+    fn check_generic_for(&mut self, generic_for: &typed_ast::GenericForStmt) {
+        for expr in &generic_for.generators {
+            self.infer_expression(expr);
         }
 
         self.with_new_scope(|checker| {
-            for pair in generic_for.names().pairs() {
-                if let Some(name) = token_identifier(pair.value()) {
-                    checker.assign_local(&name, pair.value(), TypeKind::Unknown, false);
-                }
+            for identifier in &generic_for.names {
+                checker.assign_local(&identifier.name, identifier.range, TypeKind::Unknown, false);
             }
-            checker.check_block(generic_for.block());
+            checker.check_block(&generic_for.body);
         });
     }
 
     fn bind_function_parameters(
         &mut self,
-        body: &ast::FunctionBody,
+        params: &[typed_ast::FunctionParam],
         param_annotations: &mut HashMap<String, AnnotatedType>,
     ) {
-        for pair in body.parameters().pairs() {
-            if let ast::Parameter::Name(token) = pair.value()
-                && let Some(name) = token_identifier(token)
-            {
+        for param in params {
+            if let Some(identifier) = &param.name {
                 let mut ty = TypeKind::Unknown;
                 let mut annotated_param = false;
-                if let Some(annotation) = param_annotations.remove(&name) {
+                if let Some(annotation) = param_annotations.remove(&identifier.name) {
                     annotated_param = true;
                     if let Some(expected) = self.resolve_annotation_kind(&annotation) {
                         ty = expected;
                     }
                 }
-                self.assign_local(&name, token, ty, annotated_param);
+                self.assign_local(&identifier.name, identifier.range, ty, annotated_param);
             }
         }
     }
 
-    fn analyze_condition(expr: &ast::Expression) -> ConditionEffect {
-        match expr {
-            ast::Expression::Var(_) => {
-                if let Some(name) = expression_identifier(expr) {
-                    let mut effect = ConditionEffect::default();
-                    effect.truthy.push(NarrowRule::ExcludeNil(name.clone()));
-                    effect.falsy.push(NarrowRule::RequireNil(name));
-                    effect
-                } else {
-                    ConditionEffect::default()
-                }
+    fn analyze_condition(expr: &typed_ast::Expr) -> ConditionEffect {
+        match &expr.kind {
+            typed_ast::ExprKind::Name(identifier) => {
+                let mut effect = ConditionEffect::default();
+                effect
+                    .truthy
+                    .push(NarrowRule::ExcludeNil(identifier.name.clone()));
+                effect
+                    .falsy
+                    .push(NarrowRule::RequireNil(identifier.name.clone()));
+                effect
             }
-            ast::Expression::UnaryOperator { unop, expression } => {
-                if matches!(unop, ast::UnOp::Not(_)) {
+            typed_ast::ExprKind::UnaryOp {
+                operator,
+                expression,
+            } => {
+                if operator.symbol == "not" {
                     let inner = Self::analyze_condition(expression);
                     ConditionEffect {
                         truthy: inner.falsy,
@@ -708,25 +640,23 @@ impl<'a> TypeChecker<'a> {
                     ConditionEffect::default()
                 }
             }
-            ast::Expression::BinaryOperator { lhs, binop, rhs } => {
-                let symbol = match binop.token().token_type() {
-                    TokenType::Symbol { symbol } => symbol,
-                    _ => return ConditionEffect::default(),
-                };
-                match symbol {
-                    Symbol::TwoEqual => Self::analyze_equality(lhs, rhs, true),
-                    Symbol::TildeEqual => Self::analyze_equality(lhs, rhs, false),
-                    _ => ConditionEffect::default(),
-                }
-            }
-            ast::Expression::Parentheses { expression, .. } => Self::analyze_condition(expression),
+            typed_ast::ExprKind::BinaryOp {
+                left,
+                operator,
+                right,
+            } => match operator.symbol.as_str() {
+                "==" => Self::analyze_equality(left, right, true),
+                "~=" => Self::analyze_equality(left, right, false),
+                _ => ConditionEffect::default(),
+            },
+            typed_ast::ExprKind::Parentheses(inner) => Self::analyze_condition(inner),
             _ => ConditionEffect::default(),
         }
     }
 
     fn analyze_equality(
-        lhs: &ast::Expression,
-        rhs: &ast::Expression,
+        lhs: &typed_ast::Expr,
+        rhs: &typed_ast::Expr,
         is_equal: bool,
     ) -> ConditionEffect {
         if let Some(effect) = Self::analyze_type_comparison(lhs, rhs, is_equal) {
@@ -761,8 +691,8 @@ impl<'a> TypeChecker<'a> {
     }
 
     fn analyze_type_comparison(
-        lhs: &ast::Expression,
-        rhs: &ast::Expression,
+        lhs: &typed_ast::Expr,
+        rhs: &typed_ast::Expr,
         is_equal: bool,
     ) -> Option<ConditionEffect> {
         if let Some(name) = type_call_variable(lhs)
@@ -852,14 +782,14 @@ impl<'a> TypeChecker<'a> {
         merged
     }
 
-    fn assign_local(&mut self, name: &str, token: &TokenReference, ty: TypeKind, annotated: bool) {
+    fn assign_local(&mut self, name: &str, range: TextRange, ty: TypeKind, annotated: bool) {
         let prev_annotated = self
             .lookup_entry(name)
             .map(|entry| entry.annotated)
             .unwrap_or(false);
         let merged_annotated = prev_annotated || annotated;
-        self.emit_reassignment(name, token, &ty, merged_annotated);
-        self.record_type(token, ty.clone());
+        self.emit_reassignment(name, range, &ty, merged_annotated);
+        self.record_type(range, ty.clone());
         if let Some(scope) = self.scopes.last_mut() {
             scope.insert(
                 name.to_owned(),
@@ -871,20 +801,14 @@ impl<'a> TypeChecker<'a> {
         }
     }
 
-    fn assign_nonlocal(
-        &mut self,
-        name: &str,
-        token: &TokenReference,
-        ty: TypeKind,
-        annotated: bool,
-    ) {
+    fn assign_nonlocal(&mut self, name: &str, range: TextRange, ty: TypeKind, annotated: bool) {
         let prev_annotated = self
             .lookup_entry(name)
             .map(|entry| entry.annotated)
             .unwrap_or(false);
         let merged_annotated = prev_annotated || annotated;
-        self.emit_reassignment(name, token, &ty, merged_annotated);
-        self.record_type(token, ty.clone());
+        self.emit_reassignment(name, range, &ty, merged_annotated);
+        self.record_type(range, ty.clone());
 
         if let Some(index) = self.lookup_scope_index(name)
             && let Some(scope) = self.scopes.get_mut(index)
@@ -910,13 +834,7 @@ impl<'a> TypeChecker<'a> {
         }
     }
 
-    fn emit_reassignment(
-        &mut self,
-        name: &str,
-        token: &TokenReference,
-        ty: &TypeKind,
-        annotated: bool,
-    ) {
+    fn emit_reassignment(&mut self, name: &str, range: TextRange, ty: &TypeKind, annotated: bool) {
         if ty == &TypeKind::Unknown {
             return;
         }
@@ -929,35 +847,39 @@ impl<'a> TypeChecker<'a> {
                 "variable '{name}' was previously inferred as type {} but is now assigned type {ty}",
                 existing.ty
             );
-            self.push_diagnostic(token, message, Some(DiagnosticCode::AssignTypeMismatch));
+            self.push_diagnostic(
+                Some(range),
+                message,
+                Some(DiagnosticCode::AssignTypeMismatch),
+            );
         }
     }
 
-    fn record_type(&mut self, token: &TokenReference, ty: TypeKind) {
+    fn record_type(&mut self, range: TextRange, ty: TypeKind) {
         if matches!(ty, TypeKind::Unknown) {
             return;
         }
 
-        let start = token.token().start_position();
-        let end = token.token().end_position();
+        let start = range.start;
+        let end = range.end;
         self.type_info.insert(
             DocumentPosition {
-                row: start.line(),
-                col: start.character(),
+                row: start.line,
+                col: start.character,
             },
             TypeInfo {
                 ty: ty.to_string(),
-                end_line: end.line(),
-                end_character: end.character(),
+                end_line: end.line,
+                end_character: end.character,
             },
         );
     }
 
-    fn clear_type_info(&mut self, token: &TokenReference) {
-        let start = token.token().start_position();
+    fn clear_type_info(&mut self, range: TextRange) {
+        let start = range.start;
         self.type_info.remove(&DocumentPosition {
-            row: start.line(),
-            col: start.character(),
+            row: start.line,
+            col: start.character,
         });
     }
 
@@ -983,85 +905,55 @@ impl<'a> TypeChecker<'a> {
             .map(|(idx, _)| idx)
     }
 
-    fn infer_expression(&mut self, expression: &ast::Expression) -> TypeKind {
-        match expression {
-            ast::Expression::Number(_) => TypeKind::Number,
-            ast::Expression::String(_) => TypeKind::String,
-            ast::Expression::TableConstructor(_) => TypeKind::Table,
-            ast::Expression::Function(_) => TypeKind::Function,
-            ast::Expression::Parentheses { expression, .. } => self.infer_expression(expression),
-            ast::Expression::UnaryOperator { expression, .. } => self.infer_expression(expression),
-            ast::Expression::BinaryOperator { lhs, binop, rhs } => {
-                self.infer_binary(lhs, binop, rhs)
+    fn infer_expression(&mut self, expression: &typed_ast::Expr) -> TypeKind {
+        match &expression.kind {
+            typed_ast::ExprKind::Number(_) => TypeKind::Number,
+            typed_ast::ExprKind::String(_) => TypeKind::String,
+            typed_ast::ExprKind::TableConstructor(_) => TypeKind::Table,
+            typed_ast::ExprKind::Function(_) => TypeKind::Function,
+            typed_ast::ExprKind::Parentheses(inner) => self.infer_expression(inner),
+            typed_ast::ExprKind::UnaryOp { expression, .. } => self.infer_expression(expression),
+            typed_ast::ExprKind::BinaryOp {
+                left,
+                operator,
+                right,
+            } => self.infer_binary(left, operator, right),
+            typed_ast::ExprKind::Call(_) | typed_ast::ExprKind::MethodCall(_) => TypeKind::Unknown,
+            typed_ast::ExprKind::Name(identifier) => {
+                self.lookup(&identifier.name).unwrap_or(TypeKind::Unknown)
             }
-            ast::Expression::FunctionCall(_call) => {
-                // self.try_record_function_call_type(call);
-                TypeKind::Unknown
-            }
-            ast::Expression::Var(var) => self.infer_var(var),
-            ast::Expression::Symbol(token) => match token.token().token_type() {
-                TokenType::Symbol {
-                    symbol: Symbol::True,
-                }
-                | TokenType::Symbol {
-                    symbol: Symbol::False,
-                } => TypeKind::Boolean,
-                TokenType::Symbol {
-                    symbol: Symbol::Nil,
-                } => TypeKind::Nil,
-                _ => TypeKind::Unknown,
-            },
-            _ => TypeKind::Unknown,
-        }
-    }
-
-    fn infer_var(&self, var: &ast::Var) -> TypeKind {
-        match var {
-            ast::Var::Name(token) => token_identifier(token)
-                .and_then(|name| self.lookup(&name))
-                .unwrap_or(TypeKind::Unknown),
-            ast::Var::Expression(_) => TypeKind::Unknown,
+            typed_ast::ExprKind::Boolean(_) => TypeKind::Boolean,
+            typed_ast::ExprKind::Nil => TypeKind::Nil,
             _ => TypeKind::Unknown,
         }
     }
 
     fn infer_binary(
         &mut self,
-        lhs: &ast::Expression,
-        binop: &ast::BinOp,
-        rhs: &ast::Expression,
+        lhs: &typed_ast::Expr,
+        operator: &typed_ast::Operator,
+        rhs: &typed_ast::Expr,
     ) -> TypeKind {
-        let op_token = binop.token();
-        let symbol = match op_token.token_type() {
-            TokenType::Symbol { symbol } => symbol,
-            _ => return TypeKind::Unknown,
-        };
-
-        match symbol {
-            Symbol::Plus
-            | Symbol::Minus
-            | Symbol::Star
-            | Symbol::Slash
-            | Symbol::Percent
-            | Symbol::Caret => {
+        match operator.symbol.as_str() {
+            "+" | "-" | "*" | "/" | "%" | "^" => {
                 let left = self.infer_expression(lhs);
                 let right = self.infer_expression(rhs);
-                self.expect_type(op_token, left, TypeKind::Number, OperandSide::Left);
-                self.expect_type(op_token, right, TypeKind::Number, OperandSide::Right);
+                self.expect_type(operator, left, TypeKind::Number, OperandSide::Left);
+                self.expect_type(operator, right, TypeKind::Number, OperandSide::Right);
                 TypeKind::Number
             }
-            Symbol::TwoDots => {
+            ".." => {
                 let left = self.infer_expression(lhs);
                 let right = self.infer_expression(rhs);
-                self.expect_type(op_token, left, TypeKind::String, OperandSide::Left);
-                self.expect_type(op_token, right, TypeKind::String, OperandSide::Right);
+                self.expect_type(operator, left, TypeKind::String, OperandSide::Left);
+                self.expect_type(operator, right, TypeKind::String, OperandSide::Right);
                 TypeKind::String
             }
-            Symbol::And | Symbol::Or => {
+            "and" | "or" => {
                 let left = self.infer_expression(lhs);
                 let right = self.infer_expression(rhs);
-                self.expect_type(op_token, left, TypeKind::Boolean, OperandSide::Left);
-                self.expect_type(op_token, right, TypeKind::Boolean, OperandSide::Right);
+                self.expect_type(operator, left, TypeKind::Boolean, OperandSide::Left);
+                self.expect_type(operator, right, TypeKind::Boolean, OperandSide::Right);
                 TypeKind::Boolean
             }
             _ => {
@@ -1074,7 +966,7 @@ impl<'a> TypeChecker<'a> {
 
     fn expect_type(
         &mut self,
-        token: &TokenReference,
+        operator: &typed_ast::Operator,
         actual: TypeKind,
         expected: TypeKind,
         side: OperandSide,
@@ -1085,36 +977,26 @@ impl<'a> TypeChecker<'a> {
 
         let message = format!(
             "operator '{}' expected {} operand of type {}, but found {}",
-            operator_label(token),
+            operator.symbol,
             side.describe(),
             expected,
             actual
         );
-        self.push_diagnostic(token, message, Some(DiagnosticCode::AssignTypeMismatch));
+        self.push_diagnostic(
+            Some(operator.range),
+            message,
+            Some(DiagnosticCode::AssignTypeMismatch),
+        );
     }
 
     fn push_diagnostic(
         &mut self,
-        token: &TokenReference,
+        range: Option<TextRange>,
         message: String,
         code: Option<DiagnosticCode>,
     ) {
-        let range = self.range_from_token(token);
-        self.diagnostics.push(Diagnostic::error(
-            self.path_buf(),
-            message,
-            Some(range),
-            code,
-        ));
-    }
-
-    fn range_from_token(&self, token: &TokenReference) -> TextRange {
-        let start: Position = token.token().start_position();
-        let end: Position = token.token().end_position();
-        TextRange {
-            start: TextPosition::from(start),
-            end: TextPosition::from(end),
-        }
+        self.diagnostics
+            .push(Diagnostic::error(self.path_buf(), message, range, code));
     }
 
     fn path_buf(&self) -> PathBuf {
@@ -1122,100 +1004,41 @@ impl<'a> TypeChecker<'a> {
     }
 }
 
-fn token_identifier(token: &TokenReference) -> Option<String> {
-    match token.token().token_type() {
-        TokenType::Identifier { identifier } => Some(identifier.to_string()),
+fn expression_identifier(expr: &typed_ast::Expr) -> Option<String> {
+    match &expr.kind {
+        typed_ast::ExprKind::Name(identifier) => Some(identifier.name.clone()),
+        typed_ast::ExprKind::Parentheses(inner) => expression_identifier(inner),
         _ => None,
     }
 }
 
-fn operator_label(token: &TokenReference) -> String {
-    token.token().to_string()
+fn expression_is_nil(expr: &typed_ast::Expr) -> bool {
+    matches!(expr.kind, typed_ast::ExprKind::Nil)
 }
 
-fn target_function_name(name: &ast::FunctionName) -> Option<&TokenReference> {
-    if name.method_name().is_some() {
-        return None;
-    }
-
-    let mut iter = name.names().pairs();
-    let first = iter.next()?;
-    if iter.next().is_some() {
-        return None;
-    }
-    Some(first.value())
-}
-
-fn extract_field_assignment(var: &ast::Var) -> Option<(&TokenReference, &TokenReference)> {
-    if let ast::Var::Expression(expression) = var
-        && let ast::Prefix::Name(base) = expression.prefix()
-        && let Some(ast::Suffix::Index(ast::Index::Dot { name, .. })) = expression.suffixes().next()
-    {
-        return Some((base, name));
-    }
-    None
-}
-
-fn expression_identifier(expr: &ast::Expression) -> Option<String> {
-    match expr {
-        ast::Expression::Var(ast::Var::Name(token)) => token_identifier(token),
-        ast::Expression::Parentheses { expression, .. } => expression_identifier(expression),
-        _ => None,
-    }
-}
-
-fn expression_is_nil(expr: &ast::Expression) -> bool {
-    match expr {
-        ast::Expression::Symbol(token) => matches!(
-            token.token().token_type(),
-            TokenType::Symbol {
-                symbol: Symbol::Nil
-            }
-        ),
-        ast::Expression::Parentheses { expression, .. } => expression_is_nil(expression),
-        _ => false,
-    }
-}
-
-fn type_call_variable(expr: &ast::Expression) -> Option<String> {
-    let ast::Expression::FunctionCall(call) = expr else {
+fn type_call_variable(expr: &typed_ast::Expr) -> Option<String> {
+    let typed_ast::ExprKind::Call(call) = &expr.kind else {
         return None;
     };
 
-    let ast::Prefix::Name(name_token) = call.prefix() else {
-        return None;
-    };
-
-    if token_identifier(name_token).as_deref() != Some("type") {
+    if !matches!(call.function.kind, typed_ast::ExprKind::Name(ref ident) if ident.name == "type") {
         return None;
     }
 
-    let mut suffixes = call.suffixes();
-    let ast::Suffix::Call(ast::Call::AnonymousCall(args)) = suffixes.next()? else {
+    let typed_ast::CallArgs::Parentheses(args) = &call.args else {
         return None;
     };
 
-    if suffixes.next().is_some() {
+    if args.len() != 1 {
         return None;
     }
 
-    let ast::FunctionArgs::Parentheses { arguments, .. } = args else {
-        return None;
-    };
-
-    let mut iter = arguments.pairs();
-    let first = iter.next()?.value();
-    if iter.next().is_some() {
-        return None;
-    }
-
-    expression_identifier(first)
+    expression_identifier(&args[0])
 }
 
-fn type_literal_kind(expr: &ast::Expression) -> Option<TypeKind> {
-    match expr {
-        ast::Expression::String(token) => {
-            let raw = token.to_string();
+fn type_literal_kind(expr: &typed_ast::Expr) -> Option<TypeKind> {
+    match &expr.kind {
+        typed_ast::ExprKind::String(raw) => {
             let trimmed = raw.trim();
             let literal = trimmed.trim_matches(|c| c == '"' || c == '\'');
             if literal.is_empty() {

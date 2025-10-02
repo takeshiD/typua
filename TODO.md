@@ -25,8 +25,8 @@
 ## Type Check Pipeline
 - [x] `check_ast_with_registry` で TypedAST を生成（パイプライン挿入）
 - [x] アノテーション抽出を `from_ast` ベースに切替
-- [ ] 意味解析/型解析の実処理を TypedAST ベースへ移行
-- [ ] 旧チェック処理からの段階的な置き換え（アダプタ）
+- [x] 意味解析/型解析の実処理を TypedAST ベースへ移行
+- [x] 旧チェック処理からの段階的な置き換え（アダプタ）
 - [ ] `CheckResult` に TypedAST 由来の情報を付加（設計）
 
 ## LSP/CLI/Config
@@ -39,10 +39,11 @@
 - [x] `from_ast` の挙動を間接検証（既存checkerテストが全通過）
 - [ ] ワークスペース横断のTypedAST生成・参照テスト
 - [ ] 負例テスト（不正アノテーションや壊れた型式）
+- [ ] TypedAST 化した checker の新規ユニットテスト（narrowing/演算検証の追加ケース）
 
 ## Tooling
-- [ ] `cargo clippy --all-targets --all-features` の警告ゼロ
-- [ ] `cargo fmt --all` の整形確認
+- [x] `cargo clippy --all-targets --all-features` の警告ゼロ
+- [x] `cargo fmt --all` の整形確認
 - [ ] CI（ビルド・テスト・fmt・clippy）
 
 ## リスク/メモ
