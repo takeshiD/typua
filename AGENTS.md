@@ -78,6 +78,10 @@ end
 - rename
 - signature help
 
+## Inlay Hint と診断の要件
+- 配列型（`Type[]` や `(A|B)[]` など）は inlay hint で `array` ではなく完全な型表記（例: `boolean[]`, `(boolean|number)[]`）を表示すること。
+- 配列型のアサインメント検査では `table` ではなく配列型として推論し、要素型のミスマッチを診断メッセージに反映すること。
+
 # Implementation Guidelines
 実装に際して以下の機能に対して対応するcrateをcargo addして実装をしてください。
 
@@ -210,4 +214,3 @@ TODO.mdを作成して実装の進捗情報を詳細に記載してください�
 ## Git Commit & Pull Request Guidelines
 - Use Conventional Commits (`feat:`, `fix:`, `chore:`) with imperative summaries and flag breaking changes.
 - Reference issue IDs, list manual verification steps, and keep PR scope focused.
-
