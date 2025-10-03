@@ -48,6 +48,7 @@ impl Config {
 pub struct RuntimeConfig {
     pub version: RuntimeVersion,
     pub path: Vec<String>,
+    pub path_strict: bool,
 }
 
 impl Default for RuntimeConfig {
@@ -55,6 +56,7 @@ impl Default for RuntimeConfig {
         Self {
             version: RuntimeVersion::Luajit,
             path: Vec::new(),
+            path_strict: false,
         }
     }
 }
@@ -149,6 +151,7 @@ mod tests {
         let config = Config::load_from_dir(temp.path()).expect("load config");
         assert_eq!(config.runtime.version, RuntimeVersion::Lua53);
         assert_eq!(config.runtime.path, vec!["src/*.lua".to_string()]);
+        assert!(!config.runtime.path_strict);
         assert_eq!(config.workspace.library, vec!["/opt/lua".to_string()]);
     }
 }

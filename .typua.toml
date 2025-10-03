@@ -1,9 +1,16 @@
 [runtime]
 version = "luajit" # default luajit, other version lua51, lua52, lua53, lua54
+path = [
+    "?.lua",
+    "?/init.lua"
+]
+path_strict = false
 
 [workspace]
 library = [
     "lua",
     "$VIMRUNTIME",
-    "${3rd}/luv/library"
+]
+ignore_dir = [
+    "target"
 ]

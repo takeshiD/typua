@@ -30,27 +30,28 @@ pub fn collect_source_files(target: &PathBuf, config: &Config) -> Result<Vec<Pat
         });
     }
 
-    // root is dir
     let root = target
         .canonicalize()
         .unwrap_or_else(|_| target.to_path_buf());
     let mut files = BTreeSet::new();
-    for pattern in &config.runtime.path {
-        let expanded = expand_pattern(pattern);
-        if expanded.trim().is_empty() {
-            continue;
-        }
-        let paths = if Path::new(&expanded).is_absolute() {
-            collect_from_pattern(&expanded)?
-        } else {
-            let absolute = root.join(expanded);
-            let pattern_str = absolute.to_string_lossy().to_string();
-            collect_from_pattern(&pattern_str)?
-        };
-        for p in paths.iter() {
-            files.insert(p.clone());
-        }
-    }
+    // for pattern in &config.runtime.path {
+    //     let expanded = expand_pattern(pattern);
+    //     event!(Level::DEBUG, "expanded pattern {:#?}", expanded);
+    //     if expanded.trim().is_empty() {
+    //         continue;
+    //     }
+    //     let paths = if Path::new(&expanded).is_absolute() {
+    //         collect_from_pattern(&expanded)?
+    //     } else {
+    //         let absolute = root.join(expanded);
+    //         let pattern_str = absolute.to_string_lossy().to_string();
+    //         collect_from_pattern(&pattern_str)?
+    //     };
+    //     for p in paths.iter() {
+    //         files.insert(p.clone());
+    //         event!(Level::DEBUG, "add path {:#?}", p);
+    //     }
+    // }
     if files.is_empty() {
         for entry in WalkDir::new(&root) {
             let entry = entry.map_err(|source| TypuaError::WalkDir {
@@ -68,6 +69,7 @@ pub fn collect_source_files(target: &PathBuf, config: &Config) -> Result<Vec<Pat
 }
 
 fn collect_from_pattern(pattern: &str) -> Result<Vec<PathBuf>> {
+    event!(Level::DEBUG, "glob path pattern '{:#?}'", pattern);
     let options = MatchOptions {
         case_sensitive: false,
         require_literal_separator: false,
@@ -83,7 +85,7 @@ fn collect_from_pattern(pattern: &str) -> Result<Vec<PathBuf>> {
                 match entry {
                     Ok(p) => collected_paths.push(p),
                     Err(error) => {
-                        event!(Level::ERROR, ?error)
+                        event!(Level::ERROR, ?error, "failed to glob")
                     }
                 }
             }
