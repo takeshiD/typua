@@ -88,6 +88,12 @@ impl TypeKind {
             TypeKind::Table => match other {
                 TypeKind::Union(types) => types.iter().any(|t| self.matches(t)),
                 TypeKind::Custom(_) => true,
+                TypeKind::Array(_) => true,
+                _ => self == other,
+            },
+            TypeKind::Array(expected_inner) => match other {
+                TypeKind::Union(types) => types.iter().any(|t| self.matches(t)),
+                TypeKind::Array(actual_inner) => expected_inner.matches(actual_inner.as_ref()),
                 _ => self == other,
             },
             TypeKind::Number => match other {
@@ -131,6 +137,18 @@ impl fmt::Display for TypeKind {
                     }
                 }
                 Ok(())
+            }
+            TypeKind::Array(inner) => {
+                let needs_parens = matches!(
+                    inner.as_ref(),
+                    TypeKind::Union(_) | TypeKind::FunctionSig(_) | TypeKind::Applied { .. }
+                );
+                let inner_text = inner.to_string();
+                if needs_parens {
+                    write!(f, "({inner_text})[]")
+                } else {
+                    write!(f, "{inner_text}[]")
+                }
             }
             _ => f.write_str(self.describe()),
         }

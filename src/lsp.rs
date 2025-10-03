@@ -315,10 +315,11 @@ impl LanguageServer for TypuaLanguageServer {
     async fn inlay_hint(&self, params: InlayHintParams) -> LspResult<Option<Vec<InlayHint>>> {
         let uri = params.text_document.uri;
         let range = params.range;
-        let start_row = range.start.line as usize;
-        let end_row = range.end.line as usize;
-        let start_col = range.start.character as usize;
-        let end_col = range.end.character as usize;
+        // LSP positions are 0-based; checker records positions as 1-based.
+        let start_row = range.start.line as usize + 1;
+        let end_row = range.end.line as usize + 1;
+        let start_col = range.start.character as usize + 1;
+        let end_col = range.end.character as usize + 1;
 
         let log_msg = format!(
             "inlay-hint {} (row:{}-{}, col:{}-{}) in {:?}",
@@ -516,4 +517,56 @@ pub async fn run(options: LspOptions) -> Result<()> {
 
     Server::new(stdin, stdout, socket).serve(service).await;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::position_in_range;
+    use tower_lsp::lsp_types::{Position, Range};
+
+    #[test]
+    fn position_in_range_handles_final_line_after_zero_based_conversion() {
+        let range = Range {
+            start: Position {
+                line: 0,
+                character: 0,
+            },
+            end: Position {
+                line: 1,
+                character: 20,
+            },
+        };
+
+        let start_row = range.start.line as usize + 1;
+        let end_row = range.end.line as usize + 1;
+        let start_col = range.start.character as usize + 1;
+        let end_col = range.end.character as usize + 1;
+
+        assert!(position_in_range(
+            2, 7, start_row, start_col, end_row, end_col
+        ));
+    }
+
+    #[test]
+    fn position_in_range_excludes_rows_outside_bounds() {
+        let range = Range {
+            start: Position {
+                line: 0,
+                character: 0,
+            },
+            end: Position {
+                line: 0,
+                character: 10,
+            },
+        };
+
+        let start_row = range.start.line as usize + 1;
+        let end_row = range.end.line as usize + 1;
+        let start_col = range.start.character as usize + 1;
+        let end_col = range.end.character as usize + 1;
+
+        assert!(!position_in_range(
+            2, 5, start_row, start_col, end_row, end_col
+        ));
+    }
 }

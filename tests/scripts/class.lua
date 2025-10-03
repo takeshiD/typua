@@ -1,6 +1,8 @@
 ---@class (exact) Container
 ---@field x number
 ---@field y string
+local cc = {}
+cc.__index = cc
 
 ---@type Container
 

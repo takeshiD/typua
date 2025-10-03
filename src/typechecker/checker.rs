@@ -911,7 +911,7 @@ impl<'a> TypeChecker<'a> {
         match &expression.kind {
             typed_ast::ExprKind::Number(_) => TypeKind::Number,
             typed_ast::ExprKind::String(_) => TypeKind::String,
-            typed_ast::ExprKind::TableConstructor(_) => TypeKind::Table,
+            typed_ast::ExprKind::TableConstructor(fields) => self.infer_table_constructor(fields),
             typed_ast::ExprKind::Function(_) => TypeKind::Function,
             typed_ast::ExprKind::Parentheses(inner) => self.infer_expression(inner),
             typed_ast::ExprKind::UnaryOp { expression, .. } => self.infer_expression(expression),
@@ -964,6 +964,43 @@ impl<'a> TypeChecker<'a> {
                 TypeKind::Unknown
             }
         }
+    }
+
+    fn infer_table_constructor(&mut self, fields: &[typed_ast::TableField]) -> TypeKind {
+        if let Some(array_type) = self.try_infer_array_literal(fields) {
+            return array_type;
+        }
+
+        TypeKind::Table
+    }
+
+    fn try_infer_array_literal(&mut self, fields: &[typed_ast::TableField]) -> Option<TypeKind> {
+        if fields.is_empty() {
+            return None;
+        }
+
+        let mut element_types = Vec::new();
+        for field in fields {
+            match field {
+                typed_ast::TableField::Array { value, .. } => {
+                    let ty = self.infer_expression(value);
+                    element_types.push(ty);
+                }
+                _ => return None,
+            }
+        }
+
+        if element_types.is_empty() {
+            return None;
+        }
+
+        let mut flattened = Vec::new();
+        for ty in element_types {
+            flatten_union(&ty, &mut flattened);
+        }
+
+        let element_type = build_union(flattened);
+        Some(TypeKind::Array(Box::new(element_type)))
     }
 
     fn expect_type(
@@ -1258,6 +1295,52 @@ mod tests {
             diagnostic.code.clone().unwrap(),
             DiagnosticCode::AssignTypeMismatch
         );
+    }
+
+    #[test]
+    fn array_annotation_inlay_hint_uses_full_type() {
+        let source = unindent(
+            r#"
+            ---@type (boolean|number)[]
+            local t = { true, 1 }
+            "#,
+        );
+
+        let result = run_type_check(&source);
+        let info = result
+            .type_map
+            .get(&DocumentPosition { row: 2, col: 7 })
+            .expect("missing type info for array annotation");
+
+        assert_eq!(info.ty, "(boolean|number)[]");
+        assert!(result.diagnostics.is_empty());
+    }
+
+    #[test]
+    fn array_annotation_reports_element_type_mismatch() {
+        let source = unindent(
+            r#"
+            ---@type boolean[]
+            local t = {1, 2, 3}
+            "#,
+        );
+
+        let result = run_type_check(&source);
+
+        assert_eq!(result.diagnostics.len(), 1);
+        let diagnostic = &result.diagnostics[0];
+        assert_eq!(diagnostic.code, Some(DiagnosticCode::AssignTypeMismatch));
+        assert!(
+            diagnostic
+                .message
+                .contains("annotated as type boolean[] but inferred type is number[]")
+        );
+
+        let info = result
+            .type_map
+            .get(&DocumentPosition { row: 2, col: 7 })
+            .expect("missing type info for boolean[] annotation");
+        assert_eq!(info.ty, "boolean[]");
     }
 
     #[test]

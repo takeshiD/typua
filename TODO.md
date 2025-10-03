@@ -32,8 +32,8 @@
 - [x] アノテーション抽出を `from_ast` ベースに切替
 - [x] 意味解析/型解析の実処理を TypedAST ベースへ移行
 - [x] 旧チェック処理からの段階的な置き換え（アダプタ）
-- [ ] 配列型の inlay hint で完全な型表記（例: `boolean[]`, `(boolean|number)[]`）を表示
-- [ ] 配列型の推論を `table` ではなく配列要素型として扱い、診断メッセージに要素型ミスマッチを反映
+- [x] 配列型の inlay hint で完全な型表記（例: `boolean[]`, `(boolean|number)[]`）を表示
+- [x] 配列型の推論を `table` ではなく配列要素型として扱い、診断メッセージに要素型ミスマッチを反映
 - [ ] `CheckResult` に TypedAST 由来の情報を付加（設計）
 
 ## LSP/CLI/Config

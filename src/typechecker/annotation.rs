@@ -231,18 +231,29 @@ pub(crate) fn parse_type(raw: &str) -> Option<TypeKind> {
         return None;
     }
 
-    // Optional type sugar: Type? -> Type|nil
     if let Some(stripped) = trimmed.strip_suffix('?') {
         let base_type = parse_type(stripped.trim())?;
         return Some(make_union(vec![base_type, TypeKind::Nil]));
     }
 
-    // Function signature: fun(<params>): <returns>
+    let (base_str, array_depth) = strip_array_suffixes(trimmed);
+    let mut ty = parse_type_non_array(base_str)?;
+    for _ in 0..array_depth {
+        ty = TypeKind::Array(Box::new(ty));
+    }
+    Some(ty)
+}
+
+fn parse_type_non_array(raw: &str) -> Option<TypeKind> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+
     if trimmed.starts_with("fun(") || trimmed.starts_with("fun<") {
         return parse_function_type(trimmed);
     }
 
-    // Dictionary literal type: { [K]: V }
     if trimmed.starts_with('{')
         && trimmed.ends_with('}')
         && let Some((k, v)) = parse_dictionary_type(trimmed)
@@ -253,7 +264,6 @@ pub(crate) fn parse_type(raw: &str) -> Option<TypeKind> {
         });
     }
 
-    // Tuple: [A, B, C]
     if trimmed.starts_with('[') && trimmed.ends_with(']') && trimmed.contains(',') {
         let inner = &trimmed[1..trimmed.len() - 1];
         let mut members = Vec::new();
@@ -270,7 +280,6 @@ pub(crate) fn parse_type(raw: &str) -> Option<TypeKind> {
         }
     }
 
-    // Generic application: base<Arg1, Arg2, ...>
     if let Some((base, args)) = parse_applied_type(trimmed) {
         return Some(TypeKind::Applied {
             base: Box::new(base),
@@ -278,17 +287,17 @@ pub(crate) fn parse_type(raw: &str) -> Option<TypeKind> {
         });
     }
 
-    if trimmed.contains('|') {
+    if let Some(inner) = strip_enclosing_parens(trimmed) {
+        return parse_type(inner);
+    }
+
+    let union_parts = split_top_level(trimmed, '|');
+    if union_parts.len() > 1 {
         let mut members = Vec::new();
-        for part in trimmed.split('|').map(str::trim).filter(|p| !p.is_empty()) {
+        for part in union_parts {
             members.push(parse_type(part)?);
         }
         return Some(make_union(members));
-    }
-
-    if let Some(stripped) = trimmed.strip_suffix("[]") {
-        let base_type = parse_type(stripped.trim())?;
-        return Some(TypeKind::Array(Box::new(base_type)));
     }
 
     parse_atomic_type(trimmed)
@@ -366,6 +375,86 @@ fn parse_dictionary_type(raw: &str) -> Option<(TypeKind, TypeKind)> {
     let colon = s[close + 1..].find(':')? + close + 1;
     let val_ty = s[colon + 1..].trim();
     Some((parse_type(key_ty)?, parse_type(val_ty)?))
+}
+
+fn strip_array_suffixes(raw: &str) -> (&str, usize) {
+    let mut depth = 0usize;
+    let mut current = raw.trim_end();
+    while let Some(stripped) = current.strip_suffix("[]") {
+        depth += 1;
+        current = stripped.trim_end();
+    }
+    (current.trim(), depth)
+}
+
+fn strip_enclosing_parens(raw: &str) -> Option<&str> {
+    let trimmed = raw.trim();
+    if !trimmed.starts_with('(') || !trimmed.ends_with(')') {
+        return None;
+    }
+
+    let mut depth = 0i32;
+    for (idx, ch) in trimmed.char_indices() {
+        match ch {
+            '(' => depth += 1,
+            ')' => {
+                depth -= 1;
+                if depth < 0 {
+                    return None;
+                }
+                if depth == 0 && idx != trimmed.len() - 1 {
+                    return None;
+                }
+            }
+            _ => {}
+        }
+    }
+
+    if depth == 0 {
+        Some(&trimmed[1..trimmed.len() - 1])
+    } else {
+        None
+    }
+}
+
+fn split_top_level(input: &str, delimiter: char) -> Vec<&str> {
+    let mut segments = Vec::new();
+    let mut depth_paren = 0i32;
+    let mut depth_brace = 0i32;
+    let mut depth_bracket = 0i32;
+    let mut depth_angle = 0i32;
+    let mut start = 0usize;
+    for (idx, ch) in input.char_indices() {
+        match ch {
+            '(' => depth_paren += 1,
+            ')' => depth_paren -= 1,
+            '{' => depth_brace += 1,
+            '}' => depth_brace -= 1,
+            '[' => depth_bracket += 1,
+            ']' => depth_bracket -= 1,
+            '<' => depth_angle += 1,
+            '>' => depth_angle -= 1,
+            c if c == delimiter
+                && depth_paren == 0
+                && depth_brace == 0
+                && depth_bracket == 0
+                && depth_angle == 0 =>
+            {
+                let segment = input[start..idx].trim();
+                if !segment.is_empty() {
+                    segments.push(segment);
+                }
+                start = idx + ch.len_utf8();
+            }
+            _ => {}
+        }
+    }
+
+    let trailing = input[start..].trim();
+    if !trailing.is_empty() {
+        segments.push(trailing);
+    }
+    segments
 }
 
 fn parse_function_type(raw: &str) -> Option<TypeKind> {
@@ -582,6 +671,20 @@ mod tests {
                 ty: AnnotatedType {
                     raw: "number[]".to_string(),
                     kind: Some(TypeKind::Array(Box::new(TypeKind::Number)))
+                }
+            }
+        );
+        assert_eq!(
+            parse_annotation("---@type (boolean|number)[]").unwrap(),
+            Annotation {
+                usage: AnnotationUsage::Type,
+                name: None,
+                ty: AnnotatedType {
+                    raw: "(boolean|number)[]".to_string(),
+                    kind: Some(TypeKind::Array(Box::new(make_union(vec![
+                        TypeKind::Boolean,
+                        TypeKind::Number,
+                    ]))))
                 }
             }
         );
