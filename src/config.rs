@@ -59,7 +59,7 @@ impl Default for RuntimeConfig {
     }
 }
 
-#[derive(Debug, Clone, Copy, Deserialize)]
+#[derive(Debug, Clone, Copy, Deserialize, PartialEq)]
 #[serde(rename_all = "lowercase")]
 #[derive(Default)]
 pub enum RuntimeVersion {
@@ -81,8 +81,10 @@ pub struct WorkspaceConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs::File;
     use std::io::Write;
     use std::time::{SystemTime, UNIX_EPOCH};
+    use unindent::unindent;
 
     struct TestDir {
         path: std::path::PathBuf,
@@ -114,6 +116,11 @@ mod tests {
         }
     }
 
+    fn write_config(path: &Path, contents: &str) {
+        let mut file = File::create(path).expect("create config file");
+        write!(file, "{contents}").expect("write config");
+    }
+
     #[test]
     fn load_from_dir_returns_default_when_missing() {
         let temp = TestDir::new();
@@ -127,18 +134,20 @@ mod tests {
     fn load_from_dir_reads_typua_toml() {
         let temp = TestDir::new();
         let config_path = temp.path().join(".typua.toml");
-        let mut file = std::fs::File::create(&config_path).expect("create config file");
-        writeln!(
-            file,
-            "[runtime]\nversion = \"lua53\"\ninclude = [\"src/*.lua\"]\n\n[workspace]\nlibrary = [\"/opt/lua\"]\n"
-        )
-        .expect("write config");
-
-        // Drop file handle before reading to ensure contents are flushed on all platforms.
-        drop(file);
+        let toml_source = unindent(
+            r#"
+            [runtime]
+            version = "lua53"
+            include = ["src/*.lua"]
+            
+            [workspace]
+            library = ["/opt/lua"]
+        "#,
+        );
+        write_config(&config_path, &toml_source);
 
         let config = Config::load_from_dir(temp.path()).expect("load config");
-        assert!(matches!(config.runtime.version, RuntimeVersion::Lua53));
+        assert_eq!(config.runtime.version, RuntimeVersion::Lua53);
         assert_eq!(config.runtime.include, vec!["src/*.lua".to_string()]);
         assert_eq!(config.workspace.library, vec!["/opt/lua".to_string()]);
     }
