@@ -11,7 +11,9 @@
 - [x] full_moonベースの注釈抽出API `AnnotationIndex::from_ast(&Ast, &str)` 追加
 - [x] 旧 `from_source(&str)` は暫定互換として残しつつ利用箇所を `from_ast` へ移行
 - [ ] 辞書・タプルの厳密化（専用`TypeKind`の追加検討）
-- [ ] LLS拡張（`---@alias`, `---@overload`, `---@generic`）の活用
+- [ ] `---@alias` の型エイリアス解析と `TypeRegistry` への登録（再解決可能な形で）
+- [ ] `---@generic` 宣言・適用の解析（関数/クラス）と型推論への反映
+- [ ] `---@overload` や `---@cast` 等 LuaLS 拡張アノテーションの解析と checker 連携
 
 ## TypedAST
 - [x] `typed_ast` モジュール新設（AST定義、変換器）
@@ -37,8 +39,12 @@
 - [ ] `CheckResult` に TypedAST 由来の情報を付加（設計）
 
 ## LSP/CLI/Config
-- [ ] `.typua.toml` と LSP 設定の相互運用テスト
+- [ ] CLI: `--config/-c` オプション実装（引数優先・相対/絶対パス対応）と単体テスト
+  - [ ] `.typua.toml` と LSP 設定の相互運用テスト
   - [x] `Config::load_from_dir` の単体テスト追加（基本読込ケース）
+- [ ] Config 適用: `runtime.version`/`runtime.include`/`workspace.library` を CLI / LSP / checker のファイル解決に反映
+- [ ] LSP: `LspOptions.root` を初期化で活用し、URI→Path 変換を正規化
+- [ ] LSP: `.typua.toml`/`workspace.library` を監視・再読込し、外部ライブラリからの型取得を安定化
 - [ ] LSP キャパビリティと診断位置の検証（hover/signature help）
 
 ## Testing
