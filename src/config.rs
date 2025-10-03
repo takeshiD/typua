@@ -47,14 +47,14 @@ impl Config {
 #[serde(default)]
 pub struct RuntimeConfig {
     pub version: RuntimeVersion,
-    pub include: Vec<String>,
+    pub path: Vec<String>,
 }
 
 impl Default for RuntimeConfig {
     fn default() -> Self {
         Self {
             version: RuntimeVersion::Luajit,
-            include: Vec::new(),
+            path: Vec::new(),
         }
     }
 }
@@ -126,7 +126,7 @@ mod tests {
         let temp = TestDir::new();
         let config = Config::load_from_dir(temp.path()).expect("load config");
         assert!(matches!(config.runtime.version, RuntimeVersion::Luajit));
-        assert!(config.runtime.include.is_empty());
+        assert!(config.runtime.path.is_empty());
         assert!(config.workspace.library.is_empty());
     }
 
@@ -138,7 +138,7 @@ mod tests {
             r#"
             [runtime]
             version = "lua53"
-            include = ["src/*.lua"]
+            path = ["src/*.lua"]
             
             [workspace]
             library = ["/opt/lua"]
@@ -148,7 +148,7 @@ mod tests {
 
         let config = Config::load_from_dir(temp.path()).expect("load config");
         assert_eq!(config.runtime.version, RuntimeVersion::Lua53);
-        assert_eq!(config.runtime.include, vec!["src/*.lua".to_string()]);
+        assert_eq!(config.runtime.path, vec!["src/*.lua".to_string()]);
         assert_eq!(config.workspace.library, vec!["/opt/lua".to_string()]);
     }
 }

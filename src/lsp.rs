@@ -66,7 +66,6 @@ impl TypuaLanguageServer {
 
     async fn update_document(&self, uri: Url, text: String) {
         let (diagnostics, types) = self.analyze_document(&uri, &text).await;
-
         {
             let mut documents = self.documents.write().await;
             documents.insert(
@@ -77,7 +76,6 @@ impl TypuaLanguageServer {
                 },
             );
         }
-
         self.client
             .publish_diagnostics(uri, diagnostics, None)
             .await;
@@ -98,11 +96,11 @@ impl TypuaLanguageServer {
             *text = change.text;
             return;
         }
-
         // TextDocumentSyncKind::FULL guarantees full content updates.
         *text = change.text;
     }
 
+    // Collecting type declaration in workspace
     async fn collect_workspace_registry(&self, current: &Path) -> TypeRegistry {
         let mut registry = TypeRegistry::default();
         let root = self._root.read().await;
@@ -147,7 +145,7 @@ impl TypuaLanguageServer {
         match full_moon::parse(text) {
             Ok(ast) => {
                 let path = uri_to_path(uri);
-                let workspace_registry = self.collect_workspace_registry(path.as_path()).await;
+                let workspace_registry = self.collect_workspace_registry(&path).await;
                 let result =
                     checker::check_ast_with_registry(&path, text, &ast, Some(&workspace_registry));
                 let diagnostics = result
@@ -180,7 +178,7 @@ impl LanguageServer for TypuaLanguageServer {
             && let Some(ws) = workspace_root.first()
         {
             let mut root = self._root.write().await;
-            *root = PathBuf::from(ws.uri.as_str());
+            *root = PathBuf::from(ws.uri.path());
         }
         Ok(InitializeResult {
             server_info: Some(ServerInfo {
@@ -204,11 +202,96 @@ impl LanguageServer for TypuaLanguageServer {
     }
 
     async fn initialized(&self, _: InitializedParams) {
-        let log_msg = format!("initialized in {:?}", self._root);
+        let root = self._root.read().await;
+        let log_msg = format!("initialized in {:?}", root);
         self.client
             .log_message(MessageType::INFO, log_msg.clone())
             .await;
         event!(Level::INFO, "{}", log_msg);
+        let workspace_files = match workspace::collect_source_files(&root, self._config.as_ref()) {
+            Ok(files) => files,
+            Err(error) => {
+                event!(
+                    Level::ERROR,
+                    ?root,
+                    ?error,
+                    "failed to collecting workspace files when initialized"
+                );
+                Vec::new()
+            }
+        };
+        let mut registry = TypeRegistry::default();
+        for path in workspace_files.iter() {
+            match fs::read_to_string(path) {
+                Ok(source) => {
+                    let (_, type_registry) = AnnotationIndex::from_source(&source);
+                    registry.extend(&type_registry);
+                }
+                Err(error) => {
+                    event!(
+                        Level::WARN,
+                        ?path,
+                        ?error,
+                        "failed to read file when initialized"
+                    )
+                }
+            }
+        }
+        for path in workspace_files.iter() {
+            match fs::read_to_string(path) {
+                Ok(source) => {
+                    let (diagnostics, types) = match full_moon::parse(&source) {
+                        Ok(ast) => {
+                            let result = checker::check_ast_with_registry(
+                                path,
+                                &source,
+                                &ast,
+                                Some(&registry),
+                            );
+                            let diagnostics: Vec<LspDiagnostic> = result
+                                .diagnostics
+                                .into_iter()
+                                .map(convert_checker_diagnostic)
+                                .collect();
+                            (diagnostics, result.type_map)
+                        }
+                        Err(errors) => (
+                            errors.into_iter().map(convert_error).collect(),
+                            HashMap::new(),
+                        ),
+                    };
+                    let uri = Url::from_file_path(
+                        path.to_str().expect("failed to convert from path to str"),
+                    )
+                    .expect("failed to parse from path to url");
+                    let mut documents = self.documents.write().await;
+                    documents.insert(
+                        uri.clone(),
+                        DocumentState {
+                            text: source.clone(),
+                            types: types.clone(),
+                        },
+                    );
+                    event!(
+                        Level::INFO,
+                        ?path,
+                        "initialized {} type declarations",
+                        types.len()
+                    );
+                    self.client
+                        .publish_diagnostics(uri, diagnostics, None)
+                        .await;
+                }
+                Err(error) => {
+                    event!(
+                        Level::WARN,
+                        ?path,
+                        ?error,
+                        "failed to read file when initialized"
+                    )
+                }
+            }
+        }
     }
 
     async fn shutdown(&self) -> LspResult<()> {
@@ -315,7 +398,6 @@ impl LanguageServer for TypuaLanguageServer {
     async fn inlay_hint(&self, params: InlayHintParams) -> LspResult<Option<Vec<InlayHint>>> {
         let uri = params.text_document.uri;
         let range = params.range;
-        // LSP positions are 0-based; checker records positions as 1-based.
         let start_row = range.start.line as usize + 1;
         let end_row = range.end.line as usize + 1;
         let start_col = range.start.character as usize + 1;

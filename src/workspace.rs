@@ -4,7 +4,8 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use glob::glob;
+use glob::{MatchOptions, glob_with};
+use tracing::{Level, event};
 use walkdir::WalkDir;
 
 use crate::{
@@ -13,6 +14,7 @@ use crate::{
 };
 
 pub fn collect_source_files(target: &PathBuf, config: &Config) -> Result<Vec<PathBuf>> {
+    event!(Level::DEBUG, "get metadata {:#?}", target);
     let metadata = fs::metadata(target).map_err(|source| TypuaError::Metadata {
         path: target.to_path_buf(),
         source,
@@ -28,23 +30,27 @@ pub fn collect_source_files(target: &PathBuf, config: &Config) -> Result<Vec<Pat
         });
     }
 
-    let root = canonicalize_or_use(target);
+    // root is dir
+    let root = target
+        .canonicalize()
+        .unwrap_or_else(|_| target.to_path_buf());
     let mut files = BTreeSet::new();
-    for pattern in &config.runtime.include {
+    for pattern in &config.runtime.path {
         let expanded = expand_pattern(pattern);
         if expanded.trim().is_empty() {
             continue;
         }
-
-        if Path::new(&expanded).is_absolute() {
-            collect_from_pattern(&expanded, &mut files)?;
+        let paths = if Path::new(&expanded).is_absolute() {
+            collect_from_pattern(&expanded)?
         } else {
             let absolute = root.join(expanded);
             let pattern_str = absolute.to_string_lossy().to_string();
-            collect_from_pattern(&pattern_str, &mut files)?;
+            collect_from_pattern(&pattern_str)?
+        };
+        for p in paths.iter() {
+            files.insert(p.clone());
         }
     }
-
     if files.is_empty() {
         for entry in WalkDir::new(&root) {
             let entry = entry.map_err(|source| TypuaError::WalkDir {
@@ -58,33 +64,33 @@ pub fn collect_source_files(target: &PathBuf, config: &Config) -> Result<Vec<Pat
             }
         }
     }
-
     Ok(files.into_iter().collect())
 }
 
-fn collect_from_pattern(pattern: &str, files: &mut BTreeSet<PathBuf>) -> Result<()> {
-    let entries = glob(pattern).map_err(|source| TypuaError::IncludeGlob {
+fn collect_from_pattern(pattern: &str) -> Result<Vec<PathBuf>> {
+    let options = MatchOptions {
+        case_sensitive: false,
+        require_literal_separator: false,
+        require_literal_leading_dot: false,
+    };
+    match glob_with(pattern, options).map_err(|source| TypuaError::IncludeGlob {
         pattern: pattern.to_string(),
         source,
-    })?;
-
-    for entry in entries {
-        match entry {
-            Ok(path) => {
-                if path.is_file() {
-                    files.insert(path);
+    }) {
+        Ok(paths) => {
+            let mut collected_paths = Vec::new();
+            for entry in paths {
+                match entry {
+                    Ok(p) => collected_paths.push(p),
+                    Err(error) => {
+                        event!(Level::ERROR, ?error)
+                    }
                 }
             }
-            Err(error) => {
-                return Err(TypuaError::IncludeGlobWalk {
-                    pattern: pattern.to_string(),
-                    source: error,
-                });
-            }
+            Ok(collected_paths)
         }
+        Err(e) => Err(e),
     }
-
-    Ok(())
 }
 
 fn expand_pattern(pattern: &str) -> String {
@@ -98,10 +104,6 @@ fn expand_pattern(pattern: &str) -> String {
         }
     }
     expanded
-}
-
-fn canonicalize_or_use(path: &Path) -> PathBuf {
-    path.canonicalize().unwrap_or_else(|_| path.to_path_buf())
 }
 
 #[cfg(test)]
@@ -192,7 +194,7 @@ mod tests {
         drop(file);
 
         let mut config = Config::default();
-        config.runtime.include = vec!["*.lua".to_string(), "sub/*.lua".to_string()];
+        config.runtime.path = vec!["*.lua".to_string(), "sub/*.lua".to_string()];
 
         let files =
             collect_source_files(&root.to_path_buf(), &config).expect("collect source files");
