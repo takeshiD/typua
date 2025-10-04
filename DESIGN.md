@@ -1,21 +1,3 @@
-# Lsp Interface
-
-```mermaid
-classDiagram
-    class Lsp {
-        +initalize()
-        +did_open()
-        +did_change()
-        +did_close()
-        +hover()
-        +inlay_hint()
-    }
-    class DocumentState {
-        types: HashMap~Position, TypeInfo~
-    }
-    Lsp --> DocumentState
-```
-
 # Annotations
 
 Basicaly, compatibled lua-language-server.
@@ -670,7 +652,7 @@ Flow-Analysis:
                           v
   +-----------------------+---------------------------+
   | CLI ファサード (src/cli/mod.rs)                  |
-  | - clap で引数解析                                   |
+  | - clap で引数解析                                |
   | - Config 読込 → CheckOptions / LspOptions        |
   +-----------+-----------+--------------------------+
               |           |
