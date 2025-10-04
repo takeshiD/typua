@@ -659,3 +659,54 @@ Flow-Analysis:
   Γ₀ ⊢ {stmt₁; ...; stmtₙ} : Γₙ
 ```
 
+
+# Architecture
+```text
+  +-------------------------------------------+
+  | typua バイナリ (src/main.rs)              |
+  | - run() が CLI で受けた Command を dispatch|
+  +-----------------------+-------------------+
+                          |
+                          v
+  +-----------------------+---------------------------+
+  | CLI ファサード (src/cli/mod.rs)                  |
+  | - clap で引数解析                                   |
+  | - Config 読込 → CheckOptions / LspOptions        |
+  +-----------+-----------+--------------------------+
+              |           |
+              |           v
+              |   +-------+--------------------------------------------+
+              |   | LSP サーバ (src/lsp.rs)                           |
+              |   | - tower-lsp / tokio                               |
+              |   | - DocumentState に text と TypeInfo map を保持    |
+              |   +----+---------------------+------------------------+
+              |        |                     |
+              |        | collect_workspace_registry()                  |
+              |        |  └─ workspace::collect_source_files()         |
+              |        v                     v
+              |   +----+---------------------+---------------------------------------------+
+              |   | タイプチェッカー基盤 (src/typechecker)                                 |
+              |   | - annotation::AnnotationIndex::from_{ast,source}                       |
+              |   | - typed_ast::build_typed_ast()                                         |
+              |   |     * TypedAST: ノードに局所注釈とclass_hintsを保持する拡張ASTビュー   |
+              |   | - checker::TypeChecker::check_program()                                |
+              |   | - types::{CheckReport, TypeRegistry, TypeInfo…}                        |
+              |   |     * TypeRegistry: ワークスペース横断でクラス/enum定義を集約する表     |
+              |   +----+---------------------+---------------------------------------------+
+              |        ^
+              |        |
+              v        |
+  +-----------+--------+---------------------+
+  | handle_check() (src/main.rs:25)          |
+  | └─ checker::run(CheckOptions)            |
+  |    - workspace::collect_source_files()   |
+  |    - full_moon 解析 → CheckResult        |
+  +-----------+-----------------------------+
+              |
+              v
+  +-----------+-----------------------------+
+  | Diagnostics (src/diagnostics.rs)        |
+  | - Severity, Diagnostic, Display 実装    |
+  +-----------------------------------------+
+
+```
