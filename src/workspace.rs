@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::{collections::BTreeSet, fs};
 
 use glob::{MatchOptions, glob_with};
@@ -10,7 +10,7 @@ use crate::{
     error::{Result, TypuaError},
 };
 
-pub fn collect_source_files(target: &PathBuf, config: &Config) -> Result<Vec<PathBuf>> {
+pub fn collect_source_files(target: &PathBuf, _config: &Config) -> Result<Vec<PathBuf>> {
     event!(Level::DEBUG, "get metadata {:#?}", target);
     let metadata = fs::metadata(target).map_err(|source| TypuaError::Metadata {
         path: target.to_path_buf(),
@@ -18,7 +18,7 @@ pub fn collect_source_files(target: &PathBuf, config: &Config) -> Result<Vec<Pat
     })?;
 
     if metadata.is_file() {
-        return Ok(vec![target.to_path_buf()]);
+        return Ok(vec![canonicalize_path(target)]);
     }
 
     if !metadata.is_dir() {
@@ -27,9 +27,7 @@ pub fn collect_source_files(target: &PathBuf, config: &Config) -> Result<Vec<Pat
         });
     }
 
-    let root = target
-        .canonicalize()
-        .unwrap_or_else(|_| target.to_path_buf());
+    let root = canonicalize_path(target);
     let mut files = BTreeSet::new();
     // for pattern in &config.runtime.path {
     //     let expanded = expand_pattern(pattern);
@@ -50,17 +48,7 @@ pub fn collect_source_files(target: &PathBuf, config: &Config) -> Result<Vec<Pat
     //     }
     // }
     if files.is_empty() {
-        for entry in WalkDir::new(&root) {
-            let entry = entry.map_err(|source| TypuaError::WalkDir {
-                path: root.clone(),
-                source,
-            })?;
-            if entry.file_type().is_file()
-                && entry.path().extension().is_some_and(|ext| ext == "lua")
-            {
-                files.insert(entry.into_path());
-            }
-        }
+        collect_from_directory(&root, &mut files)?;
     }
     Ok(files.into_iter().collect())
 }
@@ -105,10 +93,99 @@ fn expand_pattern(pattern: &str) -> String {
     expanded
 }
 
+pub fn collect_workspace_libraries(root: &Path, config: &Config) -> Result<Vec<PathBuf>> {
+    let mut files = BTreeSet::new();
+    let base = workspace_base(root);
+
+    for pattern in &config.workspace.library {
+        let expanded = expand_pattern(pattern);
+        let trimmed = expanded.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+
+        if has_glob(trimmed) {
+            let pattern_path = if Path::new(trimmed).is_absolute() {
+                trimmed.to_string()
+            } else {
+                base.join(trimmed).to_string_lossy().to_string()
+            };
+            let paths = collect_from_pattern(&pattern_path)?;
+            for path in paths {
+                collect_path(&path, &mut files)?;
+            }
+        } else {
+            let resolved = if Path::new(trimmed).is_absolute() {
+                PathBuf::from(trimmed)
+            } else {
+                base.join(trimmed)
+            };
+            collect_path(&resolved, &mut files)?;
+        }
+    }
+    Ok(files.into_iter().collect())
+}
+
+fn collect_path(path: &Path, files: &mut BTreeSet<PathBuf>) -> Result<()> {
+    let metadata = fs::metadata(path).map_err(|source| TypuaError::Metadata {
+        path: path.to_path_buf(),
+        source,
+    })?;
+    if metadata.is_dir() {
+        collect_from_directory(path, files)?;
+    } else if metadata.is_file() {
+        push_if_lua(path, files);
+    }
+    Ok(())
+}
+
+fn collect_from_directory(root: &Path, files: &mut BTreeSet<PathBuf>) -> Result<()> {
+    for entry in WalkDir::new(root) {
+        let entry = entry.map_err(|source| TypuaError::WalkDir {
+            path: root.to_path_buf(),
+            source,
+        })?;
+        if entry.file_type().is_file() {
+            push_if_lua(entry.path(), files);
+        }
+    }
+    Ok(())
+}
+
+fn push_if_lua(path: &Path, files: &mut BTreeSet<PathBuf>) {
+    if path
+        .extension()
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("lua"))
+    {
+        files.insert(canonicalize_path(path));
+        event!(Level::DEBUG, "collected lua file {}", path.display());
+    }
+}
+
+fn canonicalize_path(path: &Path) -> PathBuf {
+    path.canonicalize().unwrap_or_else(|_| path.to_path_buf())
+}
+
+fn workspace_base(target: &Path) -> PathBuf {
+    if target.is_dir() {
+        canonicalize_path(target)
+    } else {
+        target
+            .parent()
+            .map(canonicalize_path)
+            .unwrap_or_else(|| canonicalize_path(target))
+    }
+}
+
+fn has_glob(pattern: &str) -> bool {
+    pattern.chars().any(|c| matches!(c, '*' | '?' | '['))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::config::Config;
+    use std::collections::BTreeSet;
     use std::fs::{self, File};
     use std::io::Write;
     use std::path::{Path, PathBuf};
@@ -205,5 +282,63 @@ mod tests {
         assert_eq!(canonical_files.len(), 2);
         assert!(canonical_files.contains(&lua_root.canonicalize().unwrap()));
         assert!(canonical_files.contains(&lua_sub.canonicalize().unwrap()));
+    }
+
+    #[test]
+    fn collect_workspace_libraries_supports_relative_paths() {
+        let temp = TestDir::new();
+        let root = temp.path();
+        let lib_dir = root.join("lib");
+        fs::create_dir_all(&lib_dir).expect("create lib dir");
+        let lib_file = lib_dir.join("util.lua");
+        let mut file = File::create(&lib_file).expect("create util.lua");
+        writeln!(file, "return {{}}").expect("write util.lua");
+        drop(file);
+
+        let mut config = Config::default();
+        config.workspace.library = vec!["lib".to_string()];
+
+        let libs = collect_workspace_libraries(root, &config).expect("collect workspace libraries");
+        let canonical_libs: Vec<PathBuf> = libs
+            .into_iter()
+            .map(|path| path.canonicalize().unwrap())
+            .collect();
+
+        assert_eq!(canonical_libs.len(), 1);
+        assert!(canonical_libs.contains(&lib_file.canonicalize().unwrap()));
+    }
+
+    #[test]
+    fn collect_workspace_libraries_supports_absolute_paths_and_globs() {
+        let temp = TestDir::new();
+        let root = temp.path();
+
+        let external_dir = temp.path().join("external");
+        fs::create_dir_all(&external_dir).expect("create external dir");
+        let file_a = external_dir.join("a.lua");
+        let mut file = File::create(&file_a).expect("create a.lua");
+        writeln!(file, "return {{}}").expect("write a.lua");
+        drop(file);
+        let nested_dir = external_dir.join("nested");
+        fs::create_dir_all(&nested_dir).expect("create nested dir");
+        let file_b = nested_dir.join("b.lua");
+        let mut file = File::create(&file_b).expect("create b.lua");
+        writeln!(file, "return {{}}").expect("write b.lua");
+        drop(file);
+
+        let mut config = Config::default();
+        config.workspace.library = vec![
+            external_dir.to_string_lossy().to_string(),
+            format!("{}/**/*.lua", external_dir.to_string_lossy()),
+        ];
+
+        let libs = collect_workspace_libraries(root, &config).expect("collect workspace libraries");
+        let canonical_libs: BTreeSet<PathBuf> = libs
+            .into_iter()
+            .map(|path| path.canonicalize().unwrap())
+            .collect();
+
+        assert!(canonical_libs.contains(&file_a.canonicalize().unwrap()));
+        assert!(canonical_libs.contains(&file_b.canonicalize().unwrap()));
     }
 }

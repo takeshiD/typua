@@ -1,4 +1,4 @@
-use std::collections::VecDeque;
+use std::collections::{HashSet, VecDeque};
 use std::{
     collections::HashMap,
     fs,
@@ -27,6 +27,8 @@ pub use super::types::{CheckReport, CheckResult, TypeInfo};
 
 pub fn run(options: &CheckOptions) -> Result<CheckReport> {
     let files = workspace::collect_source_files(&options.target, &options.config)?;
+    let library_files =
+        workspace::collect_workspace_libraries(options.target.as_path(), &options.config)?;
 
     let mut sources = Vec::new();
     for path in &files {
@@ -35,8 +37,18 @@ pub fn run(options: &CheckOptions) -> Result<CheckReport> {
     }
 
     let mut workspace_registry = TypeRegistry::default();
+    let project_files: HashSet<PathBuf> = files.iter().cloned().collect();
     for (_, source) in &sources {
         let (_, registry) = AnnotationIndex::from_source(source);
+        workspace_registry.extend(&registry);
+    }
+
+    for path in library_files {
+        if project_files.contains(&path) {
+            continue;
+        }
+        let source = read_source(&path)?;
+        let (_, registry) = AnnotationIndex::from_source(&source);
         workspace_registry.extend(&registry);
     }
 

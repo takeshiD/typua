@@ -14,13 +14,13 @@ use tower_lsp::{
     jsonrpc::Result as LspResult,
     lsp_types::{
         CodeDescription, Diagnostic as LspDiagnostic, DiagnosticSeverity,
-        DidChangeTextDocumentParams, DidOpenTextDocumentParams, Hover, HoverContents, HoverParams,
-        HoverProviderCapability, InitializeParams, InitializeResult, InitializedParams, InlayHint,
-        InlayHintKind, InlayHintLabel, InlayHintParams, MarkupContent, MarkupKind, MessageType,
-        NumberOrString, OneOf, Position, Range, ServerCapabilities, ServerInfo,
-        TextDocumentContentChangeEvent, TextDocumentSyncCapability, TextDocumentSyncKind,
-        TextDocumentSyncOptions, Url, WorkspaceFoldersServerCapabilities,
-        WorkspaceServerCapabilities,
+        DidChangeConfigurationParams, DidChangeTextDocumentParams, DidOpenTextDocumentParams,
+        Hover, HoverContents, HoverParams, HoverProviderCapability, InitializeParams,
+        InitializeResult, InitializedParams, InlayHint, InlayHintKind, InlayHintLabel,
+        InlayHintParams, MarkupContent, MarkupKind, MessageType, NumberOrString, OneOf, Position,
+        Range, ServerCapabilities, ServerInfo, TextDocumentContentChangeEvent,
+        TextDocumentSyncCapability, TextDocumentSyncKind, TextDocumentSyncOptions, Url,
+        WorkspaceFoldersServerCapabilities, WorkspaceServerCapabilities,
     },
 };
 
@@ -38,7 +38,7 @@ use crate::workspace;
 pub struct TypuaLanguageServer {
     client: Client,
     _root: RwLock<PathBuf>,
-    _config: Arc<crate::config::Config>,
+    config: Arc<RwLock<crate::config::Config>>,
     documents: RwLock<HashMap<Url, DocumentState>>,
 }
 
@@ -59,7 +59,7 @@ impl TypuaLanguageServer {
         Self {
             client,
             _root: RwLock::new(PathBuf::new()),
-            _config: Arc::new(options.config),
+            config: Arc::new(RwLock::new(options.config)),
             documents: RwLock::new(HashMap::new()),
         }
     }
@@ -103,9 +103,39 @@ impl TypuaLanguageServer {
     // Collecting type declaration in workspace
     async fn collect_workspace_registry(&self, current: &Path) -> TypeRegistry {
         let mut registry = TypeRegistry::default();
-        let root = self._root.read().await;
-        match workspace::collect_source_files(&root, self._config.as_ref()) {
+        let root = {
+            let guard = self._root.read().await;
+            guard.clone()
+        };
+        let config = {
+            let guard = self.config.read().await;
+            guard.clone()
+        };
+        match workspace::collect_source_files(&root, &config) {
             Ok(files) => {
+                if let Ok(library_files) =
+                    workspace::collect_workspace_libraries(root.as_path(), &config)
+                {
+                    for path in library_files {
+                        if path == current {
+                            continue;
+                        }
+                        match fs::read_to_string(&path) {
+                            Ok(source) => {
+                                let (_, file_registry) = AnnotationIndex::from_source(&source);
+                                registry.extend(&file_registry);
+                            }
+                            Err(error) => {
+                                event!(
+                                    Level::WARN,
+                                    ?path,
+                                    ?error,
+                                    "failed to read library file when collecting registry"
+                                );
+                            }
+                        }
+                    }
+                }
                 for path in files {
                     if path == current {
                         continue;
@@ -135,6 +165,21 @@ impl TypuaLanguageServer {
             }
         }
         registry
+    }
+
+    async fn add_workspace_library(&self, library: Vec<String>) -> bool {
+        let mut config = self.config.write().await;
+        if config.workspace.library == library {
+            false
+        } else {
+            for lib in library.iter() {
+                if config.workspace.library.contains(lib) {
+                    continue;
+                }
+                config.workspace.library.push(lib.clone());
+            }
+            true
+        }
     }
 
     async fn analyze_document(
@@ -202,13 +247,20 @@ impl LanguageServer for TypuaLanguageServer {
     }
 
     async fn initialized(&self, _: InitializedParams) {
-        let root = self._root.read().await;
+        let root = {
+            let guard = self._root.read().await;
+            guard.clone()
+        };
+        let config = {
+            let gurad = self.config.read().await;
+            gurad.clone()
+        };
         let log_msg = format!("initialized in {:?}", root);
         self.client
             .log_message(MessageType::INFO, log_msg.clone())
             .await;
         event!(Level::INFO, "{}", log_msg);
-        let workspace_files = match workspace::collect_source_files(&root, self._config.as_ref()) {
+        let workspace_files = match workspace::collect_source_files(&root, &config) {
             Ok(files) => files,
             Err(error) => {
                 event!(
@@ -226,6 +278,12 @@ impl LanguageServer for TypuaLanguageServer {
                 Ok(source) => {
                     let (_, type_registry) = AnnotationIndex::from_source(&source);
                     registry.extend(&type_registry);
+                    event!(
+                        Level::DEBUG,
+                        ?path,
+                        "registered {} type declarations in workspace",
+                        type_registry.classes.len() + type_registry.enums.len()
+                    );
                 }
                 Err(error) => {
                     event!(
@@ -272,15 +330,10 @@ impl LanguageServer for TypuaLanguageServer {
                             types: types.clone(),
                         },
                     );
-                    event!(
-                        Level::INFO,
-                        ?path,
-                        "initialized {} type declarations",
-                        types.len()
-                    );
                     self.client
                         .publish_diagnostics(uri, diagnostics, None)
                         .await;
+                    event!(Level::INFO, ?path, "published {} diagnostics", types.len());
                 }
                 Err(error) => {
                     event!(
@@ -349,6 +402,159 @@ impl LanguageServer for TypuaLanguageServer {
             .await;
         event!(Level::DEBUG, "{}", log_msg);
         self.remove_document(&params.text_document.uri).await;
+    }
+
+    async fn did_change_configuration(&self, params: DidChangeConfigurationParams) {
+        let library_value = params
+            .settings
+            .pointer("/typua/workspace/library")
+            .cloned()
+            .or_else(|| params.settings.pointer("/workspace/library").cloned());
+
+        if let Some(value) = library_value {
+            match serde_json::from_value::<Vec<String>>(value) {
+                Ok(entries) => {
+                    if self.add_workspace_library(entries.clone()).await {
+                        event!(
+                            Level::DEBUG,
+                            entries = ?entries,
+                            "workspace.library updated on did_change_configuration"
+                        );
+                        // let documents = {
+                        //     let guard = self.documents.read().await;
+                        //     guard
+                        //         .iter()
+                        //         .map(|(uri, state)| (uri.clone(), state.text.clone()))
+                        //         .collect::<Vec<_>>()
+                        // };
+                        // event!(Level::DEBUG, "get documents");
+                        // for (uri, text) in documents {
+                        //     event!(Level::DEBUG, ?uri, ?text);
+                        //     self.update_document(uri, text).await;
+                        // }
+                        let root = {
+                            let gurad = self._root.read().await;
+                            gurad.clone()
+                        };
+                        let config = {
+                            let gurad = self.config.read().await;
+                            gurad.clone()
+                        };
+                        let library_files =
+                            match workspace::collect_workspace_libraries(&root, &config) {
+                                Ok(files) => files,
+                                Err(error) => {
+                                    event!(
+                                        Level::ERROR,
+                                        ?root,
+                                        ?error,
+                                        "failed to collect workspace libraries when initialized"
+                                    );
+                                    Vec::new()
+                                }
+                            };
+                        let mut registry = TypeRegistry::default();
+                        for path in library_files.iter() {
+                            match fs::read_to_string(path) {
+                                Ok(source) => {
+                                    let (_, type_registry) = AnnotationIndex::from_source(&source);
+                                    registry.extend(&type_registry);
+                                    event!(
+                                        Level::DEBUG,
+                                        ?path,
+                                        "registered {} type declarations libraries on did_change_configuration",
+                                        type_registry.classes.len() + type_registry.enums.len()
+                                    );
+                                }
+                                Err(error) => {
+                                    event!(
+                                        Level::WARN,
+                                        ?path,
+                                        ?error,
+                                        "failed to read library file when initialized"
+                                    )
+                                }
+                            }
+                        }
+                        let workspace_files = match workspace::collect_source_files(&root, &config)
+                        {
+                            Ok(files) => files,
+                            Err(error) => {
+                                event!(
+                                    Level::ERROR,
+                                    ?root,
+                                    ?error,
+                                    "failed to collecting workspace files when initialized"
+                                );
+                                Vec::new()
+                            }
+                        };
+                        for path in workspace_files.iter() {
+                            match fs::read_to_string(path) {
+                                Ok(source) => {
+                                    let (diagnostics, types) = match full_moon::parse(&source) {
+                                        Ok(ast) => {
+                                            let result = checker::check_ast_with_registry(
+                                                path,
+                                                &source,
+                                                &ast,
+                                                Some(&registry),
+                                            );
+                                            let diagnostics: Vec<LspDiagnostic> = result
+                                                .diagnostics
+                                                .into_iter()
+                                                .map(convert_checker_diagnostic)
+                                                .collect();
+                                            (diagnostics, result.type_map)
+                                        }
+                                        Err(errors) => (
+                                            errors.into_iter().map(convert_error).collect(),
+                                            HashMap::new(),
+                                        ),
+                                    };
+                                    let uri = Url::from_file_path(
+                                        path.to_str().expect("failed to convert from path to str"),
+                                    )
+                                    .expect("failed to parse from path to url");
+                                    let mut documents = self.documents.write().await;
+                                    documents.insert(
+                                        uri.clone(),
+                                        DocumentState {
+                                            text: source.clone(),
+                                            types: types.clone(),
+                                        },
+                                    );
+                                    self.client
+                                        .publish_diagnostics(uri, diagnostics, None)
+                                        .await;
+                                    event!(
+                                        Level::INFO,
+                                        ?path,
+                                        "published {} diagnostics on did_change_configuration",
+                                        types.len()
+                                    );
+                                }
+                                Err(error) => {
+                                    event!(
+                                        Level::WARN,
+                                        ?path,
+                                        ?error,
+                                        "failed to read file when initialized"
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+                Err(error) => {
+                    event!(
+                        Level::WARN,
+                        ?error,
+                        "failed to parse workspace.library from configuration"
+                    );
+                }
+            }
+        }
     }
 
     async fn hover(&self, params: HoverParams) -> LspResult<Option<Hover>> {
