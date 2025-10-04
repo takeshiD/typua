@@ -9,6 +9,7 @@
 - 🚀 Blazing Fast Typecheck
 - 💾 Low memory usage
 - 🖥️ Language Server Support
+- 🌕️ Lua5.1, 5.2, 5.3, 5.4 and LuaJIT Supported
 
 ## Status
 - **Type declaration**
@@ -46,11 +47,6 @@
 ## `npm`(⚠  Planned)
 ```bash
 npm install -g @takeshid/typua
-```
-
-## `uv`(⚠  Planned)
-```bash
-uv tool install typua
 ```
 
 ## `nix`(⚠  Planned)

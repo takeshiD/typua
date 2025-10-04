@@ -7,10 +7,7 @@ path = [
 path_strict = false
 
 [workspace]
-library = [
-    "lua",
-    "$VIMRUNTIME",
-]
 ignore_dir = [
-    "target"
+    "target",
+    ".vscode"
 ]
