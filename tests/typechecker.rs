@@ -311,3 +311,72 @@ fn multi_return_scripts_match_expected_patterns() {
     assert!(workspace_source.contains("---@return Wrapper result"));
     assert!(workspace_source.contains("---@return string? err"));
 }
+
+#[test]
+fn generic_function_instantiates_types() {
+    let source = unindent(
+        r#"
+    ---@generics T
+    ---@param x T
+    ---@return T, T[]
+    local function generic_func(x)
+        return x, {x, x}
+    end
+    local a, b = generic_func(12)
+    local f, fs = generic_func(function() return 12 end)
+    local g, gs = generic_func(function(x) return 12 end)
+    "#,
+    );
+
+    let ast = parse_source(&source);
+    let result = check_ast(Path::new("function-generics.lua"), &source, &ast);
+
+    assert!(
+        result.diagnostics.is_empty(),
+        "unexpected diagnostics: {:?}",
+        result.diagnostics
+    );
+
+    let find_type = |row: usize, expected: &str| {
+        result
+            .type_map
+            .iter()
+            .find(|(pos, info)| pos.row == row && info.ty == expected)
+            .unwrap_or_else(|| panic!("missing type {expected} at row {row}"));
+    };
+
+    find_type(7, "number");
+    find_type(7, "number[]");
+    find_type(8, "fun(): number");
+    find_type(8, "function[]");
+    find_type(9, "fun(any): number");
+    find_type(9, "function[]");
+}
+
+#[test]
+fn class_generics_specialize_array() {
+    let source = unindent(
+        r#"
+    ---@class Array<T>: { [integer]: T }
+
+    ---@type Array<string>
+    local arr = {}
+    "#,
+    );
+
+    let ast = parse_source(&source);
+    let result = check_ast(Path::new("array-generics.lua"), &source, &ast);
+
+    assert!(
+        result.diagnostics.is_empty(),
+        "unexpected diagnostics: {:?}",
+        result.diagnostics
+    );
+
+    let entry = result
+        .type_map
+        .iter()
+        .find(|(pos, info)| pos.row == 4 && info.ty == "string[]")
+        .expect("missing type info for arr");
+    assert_eq!(entry.1.ty, "string[]");
+}

@@ -244,6 +244,14 @@ pub(crate) fn parse_annotation(line: &str) -> Option<Annotation> {
             });
         }
 
+        if split_top_level(trimmed, ',').len() > 1 {
+            return Some(Annotation {
+                usage: AnnotationUsage::Return,
+                name: None,
+                ty: AnnotatedType::new(trimmed.to_string(), None),
+            });
+        }
+
         let tokens: Vec<&str> = trimmed.split_whitespace().collect();
         let (type_token, name) = if tokens.len() == 1 {
             (trimmed, None)
@@ -261,6 +269,22 @@ pub(crate) fn parse_annotation(line: &str) -> Option<Annotation> {
             usage: AnnotationUsage::Return,
             name,
             ty,
+        });
+    }
+
+    if let Some(rest) = line
+        .strip_prefix("---@generics")
+        .or_else(|| line.strip_prefix("---@generic"))
+    {
+        let trimmed = rest.trim();
+        if trimmed.is_empty() {
+            return None;
+        }
+
+        return Some(Annotation {
+            usage: AnnotationUsage::Generic,
+            name: Some(trimmed.to_string()),
+            ty: AnnotatedType::new("any".to_string(), None),
         });
     }
     None
@@ -458,7 +482,7 @@ fn strip_enclosing_parens(raw: &str) -> Option<&str> {
     }
 }
 
-fn split_top_level(input: &str, delimiter: char) -> Vec<&str> {
+pub(crate) fn split_top_level(input: &str, delimiter: char) -> Vec<&str> {
     let mut segments = Vec::new();
     let mut depth_paren = 0i32;
     let mut depth_brace = 0i32;
@@ -626,9 +650,24 @@ pub(crate) fn parse_class_declaration(line: &str) -> Option<ClassDeclaration> {
     };
 
     let mut parts = rest.splitn(2, ':');
-    let name_part = parts.next()?.trim();
-    if name_part.is_empty() {
+    let signature = parts.next()?.trim();
+    if signature.is_empty() {
         return None;
+    }
+
+    let mut name = signature;
+    let mut generics = Vec::new();
+    if let Some(start) = signature.find('<')
+        && signature.ends_with('>')
+    {
+        name = signature[..start].trim();
+        let generic_part = &signature[start + 1..signature.len() - 1];
+        generics = generic_part
+            .split(',')
+            .map(|g| g.trim())
+            .filter(|g| !g.is_empty())
+            .map(|g| g.to_string())
+            .collect();
     }
 
     let parent = parts
@@ -638,9 +677,10 @@ pub(crate) fn parse_class_declaration(line: &str) -> Option<ClassDeclaration> {
         .filter(|value| !value.is_empty());
 
     Some(ClassDeclaration {
-        name: name_part.to_string(),
+        name: name.to_string(),
         exact,
         parent,
+        generics,
     })
 }
 

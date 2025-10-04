@@ -5,7 +5,10 @@ use full_moon::ast::punctuated::Punctuated;
 use full_moon::node::Node;
 use full_moon::tokenizer::{Token, TokenReference};
 
-use super::types::{AnnotatedType, Annotation, AnnotationIndex, AnnotationUsage, ReturnAnnotation};
+use super::{
+    annotation::{parse_type, split_top_level},
+    types::{AnnotatedType, Annotation, AnnotationIndex, AnnotationUsage, ReturnAnnotation},
+};
 use crate::diagnostics::{TextPosition, TextRange};
 
 #[derive(Debug, Clone, PartialEq)]
@@ -78,6 +81,7 @@ pub struct Function {
     pub params: Vec<FunctionParam>,
     pub param_types: HashMap<String, AnnotatedType>,
     pub returns: Vec<ReturnAnnotation>,
+    pub generics: Vec<String>,
     pub annotations: Vec<Annotation>,
     pub body: Block,
     pub range: TextRange,
@@ -111,6 +115,7 @@ pub struct LocalFunction {
     pub params: Vec<FunctionParam>,
     pub param_types: HashMap<String, AnnotatedType>,
     pub returns: Vec<ReturnAnnotation>,
+    pub generics: Vec<String>,
     pub annotations: Vec<Annotation>,
     pub body: Block,
     pub range: TextRange,
@@ -386,7 +391,7 @@ fn to_stmt(stmt: &ast::Stmt, annotations: &AnnotationIndex) -> Stmt {
         ast::Stmt::FunctionDeclaration(function) => {
             let line = function.function_token().token().start_position().line();
             let annotations_for_line = annotations.line_annotations(line);
-            let (param_types, returns, remaining_annotations) =
+            let (param_types, returns, generics, remaining_annotations) =
                 function_annotations(annotations_for_line);
             let name = to_function_name(function.name());
             let params = to_function_params(function.body().parameters());
@@ -396,6 +401,7 @@ fn to_stmt(stmt: &ast::Stmt, annotations: &AnnotationIndex) -> Stmt {
                 params,
                 param_types,
                 returns,
+                generics,
                 annotations: remaining_annotations,
                 body,
                 range: token_range(function),
@@ -404,7 +410,7 @@ fn to_stmt(stmt: &ast::Stmt, annotations: &AnnotationIndex) -> Stmt {
         ast::Stmt::LocalFunction(function) => {
             let line = function.function_token().token().start_position().line();
             let annotations_for_line = annotations.line_annotations(line);
-            let (param_types, returns, remaining_annotations) =
+            let (param_types, returns, generics, remaining_annotations) =
                 function_annotations(annotations_for_line);
             let name = identifier_from_token(function.name().token());
             let params = to_function_params(function.body().parameters());
@@ -414,6 +420,7 @@ fn to_stmt(stmt: &ast::Stmt, annotations: &AnnotationIndex) -> Stmt {
                 params,
                 param_types,
                 returns,
+                generics,
                 annotations: remaining_annotations,
                 body,
                 range: token_range(function),
@@ -778,10 +785,12 @@ fn function_annotations(
 ) -> (
     HashMap<String, AnnotatedType>,
     Vec<ReturnAnnotation>,
+    Vec<String>,
     Vec<Annotation>,
 ) {
     let mut params = HashMap::new();
     let mut returns = Vec::new();
+    let mut generics = Vec::new();
     let mut leftover = Vec::new();
 
     for ann in annotations {
@@ -791,15 +800,39 @@ fn function_annotations(
                     params.insert(name, ann.ty.clone());
                 }
             }
-            AnnotationUsage::Return => returns.push(ReturnAnnotation {
-                name: ann.name.clone(),
-                ty: ann.ty.clone(),
-            }),
+            AnnotationUsage::Return => {
+                let parts = split_top_level(ann.ty.raw.as_str(), ',');
+                if parts.len() > 1 {
+                    for part in parts {
+                        let ty_str = part.trim();
+                        if ty_str.is_empty() {
+                            continue;
+                        }
+                        let ty = AnnotatedType::new(ty_str.to_string(), parse_type(ty_str));
+                        returns.push(ReturnAnnotation { name: None, ty });
+                    }
+                } else {
+                    returns.push(ReturnAnnotation {
+                        name: ann.name.clone(),
+                        ty: ann.ty.clone(),
+                    });
+                }
+            }
+            AnnotationUsage::Generic => {
+                if let Some(list) = ann.name.clone() {
+                    generics.extend(
+                        list.split(',')
+                            .map(|name| name.trim())
+                            .filter(|name| !name.is_empty())
+                            .map(|name| name.to_string()),
+                    );
+                }
+            }
             AnnotationUsage::Type => leftover.push(ann.clone()),
         }
     }
 
-    (params, returns, leftover)
+    (params, returns, generics, leftover)
 }
 
 fn identifier_from_token(token: &Token) -> Identifier {
@@ -922,6 +955,7 @@ mod tests {
         assert_eq!(func.returns.len(), 1);
         assert!(func.returns[0].name.is_none());
         assert_eq!(func.returns[0].ty.raw, "boolean");
+        assert!(func.generics.is_empty());
         assert!(matches!(func.body.stmts.last(), Some(Stmt::Return(_))));
     }
 
@@ -949,6 +983,7 @@ mod tests {
         assert_eq!(func.returns[0].ty.raw, "number");
         assert_eq!(func.returns[1].name.as_deref(), Some("err"));
         assert_eq!(func.returns[1].ty.raw, "string?");
+        assert!(func.generics.is_empty());
     }
 
     #[test]

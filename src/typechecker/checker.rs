@@ -251,7 +251,10 @@ impl<'a> TypeChecker<'a> {
         if let Some(resolved) = self.type_registry.resolve(&annotation.raw) {
             return Some(resolved);
         }
-        annotation.kind.clone()
+        annotation
+            .kind
+            .as_ref()
+            .map(|kind| self.type_registry.normalize_type(kind.clone()))
     }
 
     fn check_stmt(&mut self, stmt: &typed_ast::Stmt) {
@@ -394,14 +397,29 @@ impl<'a> TypeChecker<'a> {
         let mut annotations = assignment.annotations.clone();
         let mut class_hints: VecDeque<String> = VecDeque::from(assignment.class_hints.clone());
 
-        let expr_types: Vec<TypeKind> = assignment
+        let expression_returns: Vec<Vec<TypeKind>> = assignment
             .values
             .iter()
-            .map(|expr| self.infer_expression(expr))
+            .map(|expr| self.infer_expression_returns(expr))
             .collect();
 
+        let value_count = assignment.values.len();
+
         for (index, identifier) in assignment.names.iter().enumerate() {
-            let inferred = expr_types.get(index).cloned().unwrap_or(TypeKind::Nil);
+            let (value_idx, return_pos) = if value_count == 0 {
+                (0usize, index)
+            } else if index < value_count.saturating_sub(1) {
+                (index, 0usize)
+            } else {
+                let last = value_count - 1;
+                (last, index.saturating_sub(last))
+            };
+
+            let returns = expression_returns
+                .get(value_idx)
+                .cloned()
+                .unwrap_or_else(|| vec![TypeKind::Nil]);
+            let inferred = returns.get(return_pos).cloned().unwrap_or(TypeKind::Nil);
             let is_table_literal = matches!(inferred, TypeKind::Table);
             let before_len = annotations.len();
             let (mut ty, mut annotated) =
@@ -423,15 +441,29 @@ impl<'a> TypeChecker<'a> {
     fn check_assignment(&mut self, assignment: &typed_ast::Assign) {
         let mut annotations = assignment.annotations.clone();
         let mut class_hints: VecDeque<String> = VecDeque::from(assignment.class_hints.clone());
-
-        let expr_types: Vec<TypeKind> = assignment
+        let expression_returns: Vec<Vec<TypeKind>> = assignment
             .values
             .iter()
-            .map(|expr| self.infer_expression(expr))
+            .map(|expr| self.infer_expression_returns(expr))
             .collect();
 
+        let value_count = assignment.values.len();
+
         for (index, target) in assignment.targets.iter().enumerate() {
-            let inferred = expr_types.get(index).cloned().unwrap_or(TypeKind::Nil);
+            let (value_idx, return_pos) = if value_count == 0 {
+                (0usize, index)
+            } else if index < value_count.saturating_sub(1) {
+                (index, 0usize)
+            } else {
+                let last = value_count - 1;
+                (last, index.saturating_sub(last))
+            };
+
+            let returns = expression_returns
+                .get(value_idx)
+                .cloned()
+                .unwrap_or_else(|| vec![TypeKind::Nil]);
+            let inferred = returns.get(return_pos).cloned().unwrap_or(TypeKind::Nil);
 
             match &target.kind {
                 typed_ast::ExprKind::Name(identifier) => {
@@ -455,8 +487,7 @@ impl<'a> TypeChecker<'a> {
                     if let Some(base_name) = expression_identifier(base)
                         && let Some(TypeKind::Custom(class_name)) = self.lookup(&base_name)
                     {
-                        let value_type =
-                            expr_types.get(index).cloned().unwrap_or(TypeKind::Unknown);
+                        let value_type = inferred.clone();
                         self.validate_field_assignment(&class_name, name, &value_type);
                     }
                 }
@@ -469,8 +500,12 @@ impl<'a> TypeChecker<'a> {
         let mut annotations = local_fn.annotations.clone();
         let mut param_annotations = local_fn.param_types.clone();
 
-        let inferred =
-            self.build_function_signature(&local_fn.params, &param_annotations, &local_fn.returns);
+        let inferred = self.build_function_signature(
+            &local_fn.params,
+            &param_annotations,
+            &local_fn.returns,
+            &local_fn.generics,
+        );
 
         let (ty, annotated) =
             self.apply_type_annotation(&local_fn.name, inferred, &mut annotations);
@@ -494,8 +529,12 @@ impl<'a> TypeChecker<'a> {
         let mut annotations = function.annotations.clone();
         let mut param_annotations = function.param_types.clone();
 
-        let inferred =
-            self.build_function_signature(&function.params, &param_annotations, &function.returns);
+        let inferred = self.build_function_signature(
+            &function.params,
+            &param_annotations,
+            &function.returns,
+            &function.generics,
+        );
 
         if let Some(identifier) = function.name.last_component() {
             let (ty, annotated) =
@@ -638,8 +677,12 @@ impl<'a> TypeChecker<'a> {
         params: &[typed_ast::FunctionParam],
         param_annotations: &HashMap<String, AnnotatedType>,
         returns: &[ReturnAnnotation],
+        generics: &[String],
     ) -> TypeKind {
-        let mut fn_type = FunctionType::default();
+        let mut fn_type = FunctionType {
+            generics: generics.to_vec(),
+            ..FunctionType::default()
+        };
 
         for param in params {
             let name = param.name.as_ref().map(|id| id.name.clone());
@@ -648,9 +691,9 @@ impl<'a> TypeChecker<'a> {
                 && let Some(annotation) = param_annotations.get(name_str)
             {
                 if let Some(resolved) = self.resolve_annotation_kind(annotation) {
-                    ty = resolved;
+                    ty = Self::mark_generic_names(resolved, generics);
                 } else if let Some(kind) = &annotation.kind {
-                    ty = kind.clone();
+                    ty = Self::mark_generic_names(kind.clone(), generics);
                 }
             }
 
@@ -668,9 +711,13 @@ impl<'a> TypeChecker<'a> {
 
         for ret in returns {
             if let Some(resolved) = self.resolve_annotation_kind(&ret.ty) {
-                fn_type.returns.push(resolved);
+                fn_type
+                    .returns
+                    .push(Self::mark_generic_names(resolved, generics));
             } else if let Some(kind) = &ret.ty.kind {
-                fn_type.returns.push(kind.clone());
+                fn_type
+                    .returns
+                    .push(Self::mark_generic_names(kind.clone(), generics));
             } else {
                 fn_type.returns.push(TypeKind::Unknown);
             }
@@ -970,12 +1017,98 @@ impl<'a> TypeChecker<'a> {
             .map(|(idx, _)| idx)
     }
 
+    fn merge_types(a: TypeKind, b: TypeKind) -> TypeKind {
+        if a == b {
+            return a;
+        }
+        if matches!(a, TypeKind::Unknown) {
+            return b;
+        }
+        if matches!(b, TypeKind::Unknown) {
+            return a;
+        }
+
+        match (a, b) {
+            (TypeKind::Union(types_a), TypeKind::Union(types_b)) => {
+                let mut merged = types_a;
+                for ty in types_b {
+                    if !merged.contains(&ty) {
+                        merged.push(ty);
+                    }
+                }
+                TypeKind::Union(merged)
+            }
+            (TypeKind::Union(mut types), other) | (other, TypeKind::Union(mut types)) => {
+                if !types.contains(&other) {
+                    types.push(other);
+                }
+                TypeKind::Union(types)
+            }
+            (left, right) => TypeKind::Union(vec![left, right]),
+        }
+    }
+
+    fn mark_generic_names(ty: TypeKind, generics: &[String]) -> TypeKind {
+        match ty {
+            TypeKind::Custom(name) => {
+                if generics.iter().any(|g| g == &name) {
+                    TypeKind::Generic(name)
+                } else {
+                    TypeKind::Custom(name)
+                }
+            }
+            TypeKind::Array(inner) => {
+                TypeKind::Array(Box::new(Self::mark_generic_names(*inner, generics)))
+            }
+            TypeKind::Union(types) => TypeKind::Union(
+                types
+                    .into_iter()
+                    .map(|t| Self::mark_generic_names(t, generics))
+                    .collect(),
+            ),
+            TypeKind::FunctionSig(sig) => {
+                let params = sig
+                    .params
+                    .into_iter()
+                    .map(|param| TypeFunctionParam {
+                        name: param.name,
+                        ty: Self::mark_generic_names(param.ty, generics),
+                        is_self: param.is_self,
+                        is_vararg: param.is_vararg,
+                    })
+                    .collect();
+                let returns = sig
+                    .returns
+                    .into_iter()
+                    .map(|ret| Self::mark_generic_names(ret, generics))
+                    .collect();
+                let vararg = sig
+                    .vararg
+                    .map(|vararg| Box::new(Self::mark_generic_names(*vararg, generics)));
+                TypeKind::FunctionSig(Box::new(FunctionType {
+                    generics: sig.generics.clone(),
+                    params,
+                    returns,
+                    vararg,
+                }))
+            }
+            TypeKind::Applied { base, args } => TypeKind::Applied {
+                base: Box::new(Self::mark_generic_names(*base, generics)),
+                args: args
+                    .into_iter()
+                    .map(|arg| Self::mark_generic_names(arg, generics))
+                    .collect(),
+            },
+            other => other,
+        }
+    }
+
     fn infer_expression(&mut self, expression: &typed_ast::Expr) -> TypeKind {
         match &expression.kind {
             typed_ast::ExprKind::Number(_) => TypeKind::Number,
             typed_ast::ExprKind::String(_) => TypeKind::String,
             typed_ast::ExprKind::TableConstructor(fields) => self.infer_table_constructor(fields),
-            typed_ast::ExprKind::Function(_) => TypeKind::Function,
+            typed_ast::ExprKind::Function(func_expr) => self.infer_function_expression(func_expr),
             typed_ast::ExprKind::Parentheses(inner) => self.infer_expression(inner),
             typed_ast::ExprKind::UnaryOp { expression, .. } => self.infer_expression(expression),
             typed_ast::ExprKind::BinaryOp {
@@ -994,38 +1127,255 @@ impl<'a> TypeChecker<'a> {
         }
     }
 
-    fn infer_call_expression(&mut self, call: &typed_ast::CallExpr) -> TypeKind {
-        let callee_type = self.infer_expression(&call.function);
-        Self::call_return_type(&callee_type).unwrap_or(TypeKind::Unknown)
+    fn infer_expression_returns(&mut self, expression: &typed_ast::Expr) -> Vec<TypeKind> {
+        match &expression.kind {
+            typed_ast::ExprKind::Call(call) => self.infer_call_return_types(call),
+            typed_ast::ExprKind::MethodCall(method_call) => {
+                // Currently treat method calls as unknown multi-return.
+                let callee_type = self.infer_expression(&typed_ast::Expr {
+                    kind: typed_ast::ExprKind::MethodCall(method_call.clone()),
+                    range: method_call.range,
+                });
+                vec![callee_type]
+            }
+            _ => vec![self.infer_expression(expression)],
+        }
     }
 
-    fn call_return_type(callee: &TypeKind) -> Option<TypeKind> {
-        match callee {
-            TypeKind::FunctionSig(signature) => {
-                if signature.returns.is_empty() {
-                    Some(TypeKind::Nil)
-                } else if signature.returns.len() == 1 {
-                    Some(signature.returns[0].clone())
-                } else {
-                    Some(TypeKind::Union(signature.returns.clone()))
-                }
+    fn infer_function_expression(&mut self, func_expr: &typed_ast::FunctionExpr) -> TypeKind {
+        let mut fn_type = FunctionType::default();
+
+        for param in &func_expr.params {
+            fn_type.params.push(TypeFunctionParam {
+                name: param.name.as_ref().map(|id| id.name.clone()),
+                ty: TypeKind::Unknown,
+                is_self: false,
+                is_vararg: param.is_vararg,
+            });
+            if param.is_vararg {
+                fn_type.vararg = Some(Box::new(TypeKind::Unknown));
             }
-            TypeKind::Union(types) => {
-                let mut collected = Vec::new();
-                for ty in types {
-                    if let Some(ret) = Self::call_return_type(ty) {
-                        collected.push(ret);
+        }
+
+        let mut aggregated_returns: Vec<TypeKind> = Vec::new();
+        for stmt in &func_expr.body.stmts {
+            if let typed_ast::Stmt::Return(ret) = stmt {
+                for (idx, expr) in ret.values.iter().enumerate() {
+                    let ty = self.infer_expression(expr);
+                    if let Some(existing) = aggregated_returns.get_mut(idx) {
+                        *existing = Self::merge_types(existing.clone(), ty);
+                    } else {
+                        aggregated_returns.push(ty);
                     }
                 }
-                if collected.is_empty() {
-                    None
-                } else if collected.len() == 1 {
-                    Some(collected.into_iter().next().unwrap())
-                } else {
-                    Some(TypeKind::Union(collected))
+            }
+        }
+
+        if aggregated_returns.is_empty() {
+            aggregated_returns.push(TypeKind::Unknown);
+        }
+
+        fn_type.returns = aggregated_returns;
+        TypeKind::FunctionSig(Box::new(fn_type))
+    }
+
+    fn infer_call_expression(&mut self, call: &typed_ast::CallExpr) -> TypeKind {
+        let returns = self.infer_call_return_types(call);
+        returns.into_iter().next().unwrap_or(TypeKind::Unknown)
+    }
+
+    fn infer_call_return_types(&mut self, call: &typed_ast::CallExpr) -> Vec<TypeKind> {
+        let callee_type = self.infer_expression(&call.function);
+        let arg_types = self.collect_call_arg_types(&call.args);
+        let returns = self.instantiate_function_call(&callee_type, &arg_types);
+        if returns.is_empty() {
+            vec![TypeKind::Unknown]
+        } else {
+            returns
+        }
+    }
+
+    fn collect_call_arg_types(&mut self, args: &typed_ast::CallArgs) -> Vec<TypeKind> {
+        match args {
+            typed_ast::CallArgs::Parentheses(list) => list
+                .iter()
+                .map(|expr| self.infer_expression(expr))
+                .collect(),
+            typed_ast::CallArgs::String(_) => vec![TypeKind::String],
+            typed_ast::CallArgs::Table(fields) => {
+                let ty = self.infer_table_constructor(fields);
+                vec![ty]
+            }
+        }
+    }
+
+    fn instantiate_function_call(
+        &self,
+        callee: &TypeKind,
+        arg_types: &[TypeKind],
+    ) -> Vec<TypeKind> {
+        match callee {
+            TypeKind::FunctionSig(signature) => {
+                self.instantiate_function_signature(signature, arg_types)
+            }
+            TypeKind::Union(types) => {
+                let mut aggregated = Vec::new();
+                for ty in types {
+                    let returns = self.instantiate_function_call(ty, arg_types);
+                    for ret in returns {
+                        aggregated.push(ret);
+                    }
+                }
+                aggregated
+            }
+            _ => Vec::new(),
+        }
+    }
+
+    fn instantiate_function_signature(
+        &self,
+        signature: &FunctionType,
+        arg_types: &[TypeKind],
+    ) -> Vec<TypeKind> {
+        let mut mapping: HashMap<String, TypeKind> = HashMap::new();
+
+        for (idx, param) in signature.params.iter().enumerate() {
+            if param.is_vararg {
+                for arg in arg_types.iter().skip(idx) {
+                    let normalized = self.type_registry.normalize_type(arg.clone());
+                    Self::bind_generic_type(&param.ty, &normalized, &mut mapping);
+                }
+                break;
+            } else if let Some(actual) = arg_types.get(idx) {
+                let normalized = self.type_registry.normalize_type(actual.clone());
+                Self::bind_generic_type(&param.ty, &normalized, &mut mapping);
+            }
+        }
+
+        if let Some(vararg) = &signature.vararg {
+            for arg in arg_types.iter().skip(signature.params.len()) {
+                let normalized = self.type_registry.normalize_type(arg.clone());
+                Self::bind_generic_type(vararg, &normalized, &mut mapping);
+            }
+        }
+
+        for generic in &signature.generics {
+            mapping.entry(generic.clone()).or_insert(TypeKind::Unknown);
+        }
+
+        signature
+            .returns
+            .iter()
+            .map(|ret| Self::substitute_generics(ret, &mapping))
+            .map(|ty| self.type_registry.normalize_type(ty))
+            .collect()
+    }
+
+    fn bind_generic_type(
+        expected: &TypeKind,
+        actual: &TypeKind,
+        mapping: &mut HashMap<String, TypeKind>,
+    ) {
+        match expected {
+            TypeKind::Generic(name) => {
+                if matches!(actual, TypeKind::Unknown) {
+                    return;
+                }
+                mapping
+                    .entry(name.clone())
+                    .and_modify(|existing| {
+                        *existing = Self::merge_types(existing.clone(), actual.clone())
+                    })
+                    .or_insert(actual.clone());
+            }
+            TypeKind::Array(inner_expected) => {
+                if let TypeKind::Array(inner_actual) = actual {
+                    Self::bind_generic_type(inner_expected, inner_actual.as_ref(), mapping);
                 }
             }
-            _ => None,
+            TypeKind::Union(expected_list) => {
+                for expected_ty in expected_list {
+                    Self::bind_generic_type(expected_ty, actual, mapping);
+                }
+            }
+            TypeKind::FunctionSig(expected_sig) => {
+                if let TypeKind::FunctionSig(actual_sig) = actual {
+                    for (expected_param, actual_param) in
+                        expected_sig.params.iter().zip(&actual_sig.params)
+                    {
+                        Self::bind_generic_type(&expected_param.ty, &actual_param.ty, mapping);
+                    }
+                    for (expected_ret, actual_ret) in
+                        expected_sig.returns.iter().zip(&actual_sig.returns)
+                    {
+                        Self::bind_generic_type(expected_ret, actual_ret, mapping);
+                    }
+                }
+            }
+            TypeKind::Applied {
+                base: expected_base,
+                args: expected_args,
+            } => {
+                if let TypeKind::Applied {
+                    base: actual_base,
+                    args: actual_args,
+                } = actual
+                {
+                    Self::bind_generic_type(expected_base, actual_base, mapping);
+                    for (expected_arg, actual_arg) in expected_args.iter().zip(actual_args) {
+                        Self::bind_generic_type(expected_arg, actual_arg, mapping);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn substitute_generics(ty: &TypeKind, mapping: &HashMap<String, TypeKind>) -> TypeKind {
+        match ty {
+            TypeKind::Generic(name) => mapping.get(name).cloned().unwrap_or(TypeKind::Unknown),
+            TypeKind::Array(inner) => {
+                TypeKind::Array(Box::new(Self::substitute_generics(inner, mapping)))
+            }
+            TypeKind::Union(types) => {
+                let substituted: Vec<TypeKind> = types
+                    .iter()
+                    .map(|t| Self::substitute_generics(t, mapping))
+                    .collect();
+                TypeKind::Union(substituted)
+            }
+            TypeKind::FunctionSig(sig) => {
+                let mut new_sig = FunctionType::default();
+                for param in &sig.params {
+                    new_sig.params.push(TypeFunctionParam {
+                        name: param.name.clone(),
+                        ty: Self::substitute_generics(&param.ty, mapping),
+                        is_self: param.is_self,
+                        is_vararg: param.is_vararg,
+                    });
+                }
+                if let Some(vararg) = &sig.vararg {
+                    new_sig.vararg = Some(Box::new(Self::substitute_generics(vararg, mapping)));
+                }
+                new_sig.returns = sig
+                    .returns
+                    .iter()
+                    .map(|ret| Self::substitute_generics(ret, mapping))
+                    .collect();
+                TypeKind::FunctionSig(Box::new(new_sig))
+            }
+            TypeKind::Applied { base, args } => {
+                let new_base = Self::substitute_generics(base, mapping);
+                let new_args = args
+                    .iter()
+                    .map(|arg| Self::substitute_generics(arg, mapping))
+                    .collect();
+                TypeKind::Applied {
+                    base: Box::new(new_base),
+                    args: new_args,
+                }
+            }
+            _ => ty.clone(),
         }
     }
 

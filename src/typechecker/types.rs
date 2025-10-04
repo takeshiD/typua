@@ -75,9 +75,41 @@ impl TypeKind {
 
         match self {
             TypeKind::Union(types) => types.iter().any(|t| t.matches(other)),
+            TypeKind::Generic(_) => true,
             TypeKind::FunctionSig(expected) => match other {
                 TypeKind::Union(types) => types.iter().any(|t| self.matches(t)),
-                TypeKind::FunctionSig(actual) => expected == actual,
+                TypeKind::FunctionSig(actual) => {
+                    if expected.params.len() != actual.params.len() {
+                        return false;
+                    }
+                    if expected.returns.len() != actual.returns.len() {
+                        return false;
+                    }
+                    for (expected_param, actual_param) in expected.params.iter().zip(&actual.params)
+                    {
+                        if expected_param.is_vararg != actual_param.is_vararg {
+                            return false;
+                        }
+                        if !expected_param.ty.matches(&actual_param.ty) {
+                            return false;
+                        }
+                    }
+                    match (&expected.vararg, &actual.vararg) {
+                        (Some(expected_vararg), Some(actual_vararg)) => {
+                            if !expected_vararg.matches(actual_vararg) {
+                                return false;
+                            }
+                        }
+                        (None, None) => {}
+                        _ => return false,
+                    }
+                    for (expected_ret, actual_ret) in expected.returns.iter().zip(&actual.returns) {
+                        if !expected_ret.matches(actual_ret) {
+                            return false;
+                        }
+                    }
+                    true
+                }
                 TypeKind::Function => true,
                 _ => false,
             },
@@ -105,6 +137,7 @@ impl TypeKind {
             TypeKind::Array(expected_inner) => match other {
                 TypeKind::Union(types) => types.iter().any(|t| self.matches(t)),
                 TypeKind::Array(actual_inner) => expected_inner.matches(actual_inner.as_ref()),
+                TypeKind::Table => true,
                 _ => self == other,
             },
             TypeKind::Number => match other {
@@ -162,28 +195,35 @@ impl fmt::Display for TypeKind {
                 }
             }
             TypeKind::FunctionSig(sig) => {
+                let render = |ty: &TypeKind| {
+                    if matches!(ty, TypeKind::Unknown) {
+                        "any".to_string()
+                    } else {
+                        ty.to_string()
+                    }
+                };
                 write!(f, "fun(")?;
                 for (index, param) in sig.params.iter().enumerate() {
                     if index > 0 {
                         write!(f, ", ")?;
                     }
                     if param.is_vararg {
-                        write!(f, "{}...", param.ty)?;
+                        write!(f, "{}...", render(&param.ty))?;
                     } else {
-                        write!(f, "{}", param.ty)?;
+                        write!(f, "{}", render(&param.ty))?;
                     }
                 }
                 if let Some(vararg) = &sig.vararg {
                     if !sig.params.is_empty() {
                         write!(f, ", ")?;
                     }
-                    write!(f, "{}...", vararg)?;
+                    write!(f, "{}...", render(vararg))?;
                 }
                 write!(f, ")")?;
                 if !sig.returns.is_empty() {
-                    write!(f, ": {}", sig.returns[0])?;
+                    write!(f, ": {}", render(&sig.returns[0]))?;
                     for ret in sig.returns.iter().skip(1) {
-                        write!(f, ", {}", ret)?;
+                        write!(f, ", {}", render(ret))?;
                     }
                 }
                 Ok(())
@@ -221,14 +261,16 @@ pub struct ClassInfo {
     pub exact: bool,
     pub parent: Option<String>,
     pub fields: HashMap<String, AnnotatedType>,
+    pub generics: Vec<String>,
 }
 
 impl ClassInfo {
-    pub fn new(exact: bool, parent: Option<String>) -> Self {
+    pub fn new(exact: bool, parent: Option<String>, generics: Vec<String>) -> Self {
         Self {
             exact,
             parent,
             fields: HashMap::new(),
+            generics,
         }
     }
 }
@@ -242,12 +284,12 @@ pub struct TypeRegistry {
 impl TypeRegistry {
     pub fn register_class(&mut self, decl: ClassDeclaration) {
         let name = decl.name.clone();
-        let entry = self
-            .classes
-            .entry(name)
-            .or_insert_with(|| ClassInfo::new(decl.exact, decl.parent.clone()));
+        let entry = self.classes.entry(name).or_insert_with(|| {
+            ClassInfo::new(decl.exact, decl.parent.clone(), decl.generics.clone())
+        });
         entry.exact = decl.exact;
         entry.parent = decl.parent;
+        entry.generics = decl.generics;
     }
 
     pub fn register_enum(&mut self, name: &str) {
@@ -258,7 +300,7 @@ impl TypeRegistry {
         let entry = self
             .classes
             .entry(class.to_string())
-            .or_insert_with(|| ClassInfo::new(false, None));
+            .or_insert_with(|| ClassInfo::new(false, None, Vec::new()));
         entry.fields.insert(field.to_string(), ty);
     }
 
@@ -302,10 +344,74 @@ impl TypeRegistry {
             for (field, ty) in &info.fields {
                 entry.fields.insert(field.clone(), ty.clone());
             }
+            if entry.generics.is_empty() {
+                entry.generics = info.generics.clone();
+            }
         }
 
         for (name, ()) in &other.enums {
             self.enums.insert(name.clone(), ());
+        }
+    }
+
+    pub fn normalize_type(&self, ty: TypeKind) -> TypeKind {
+        let _ = self;
+        match ty {
+            TypeKind::Array(inner) => {
+                let normalized_inner = self.normalize_type(*inner);
+                let inner = match normalized_inner {
+                    TypeKind::FunctionSig(_) => TypeKind::Function,
+                    other => other,
+                };
+                TypeKind::Array(Box::new(inner))
+            }
+            TypeKind::Union(types) => {
+                TypeKind::Union(types.into_iter().map(|t| self.normalize_type(t)).collect())
+            }
+            TypeKind::FunctionSig(sig) => {
+                let params = sig
+                    .params
+                    .into_iter()
+                    .map(|param| FunctionParam {
+                        name: param.name,
+                        ty: self.normalize_type(param.ty),
+                        is_self: param.is_self,
+                        is_vararg: param.is_vararg,
+                    })
+                    .collect();
+                let returns = sig
+                    .returns
+                    .into_iter()
+                    .map(|ret| self.normalize_type(ret))
+                    .collect();
+                let vararg = sig
+                    .vararg
+                    .map(|vararg| Box::new(self.normalize_type(*vararg)));
+                TypeKind::FunctionSig(Box::new(FunctionType {
+                    params,
+                    returns,
+                    vararg,
+                    ..FunctionType::default()
+                }))
+            }
+            TypeKind::Applied { base, args } => {
+                let normalized_base = self.normalize_type(*base);
+                let normalized_args: Vec<TypeKind> = args
+                    .into_iter()
+                    .map(|arg| self.normalize_type(arg))
+                    .collect();
+                if let TypeKind::Custom(name) = &normalized_base
+                    && name == "Array"
+                    && normalized_args.len() == 1
+                {
+                    return TypeKind::Array(Box::new(normalized_args[0].clone()));
+                }
+                TypeKind::Applied {
+                    base: Box::new(normalized_base),
+                    args: normalized_args,
+                }
+            }
+            other => other,
         }
     }
 }
@@ -333,6 +439,7 @@ pub enum AnnotationUsage {
     Type,
     Param,
     Return,
+    Generic,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -371,6 +478,7 @@ pub struct ClassDeclaration {
     pub name: String,
     pub exact: bool,
     pub parent: Option<String>,
+    pub generics: Vec<String>,
 }
 
 #[derive(Clone, Copy)]
