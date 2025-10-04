@@ -75,6 +75,17 @@ impl TypeKind {
 
         match self {
             TypeKind::Union(types) => types.iter().any(|t| t.matches(other)),
+            TypeKind::FunctionSig(expected) => match other {
+                TypeKind::Union(types) => types.iter().any(|t| self.matches(t)),
+                TypeKind::FunctionSig(actual) => expected == actual,
+                TypeKind::Function => true,
+                _ => false,
+            },
+            TypeKind::Function => match other {
+                TypeKind::Union(types) => types.iter().any(|t| self.matches(t)),
+                TypeKind::FunctionSig(_) => true,
+                _ => self == other,
+            },
             TypeKind::Custom(_) => match other {
                 TypeKind::Union(types) => types.iter().any(|t| self.matches(t)),
                 TypeKind::Table => true,
@@ -149,6 +160,33 @@ impl fmt::Display for TypeKind {
                 } else {
                     write!(f, "{inner_text}[]")
                 }
+            }
+            TypeKind::FunctionSig(sig) => {
+                write!(f, "fun(")?;
+                for (index, param) in sig.params.iter().enumerate() {
+                    if index > 0 {
+                        write!(f, ", ")?;
+                    }
+                    if param.is_vararg {
+                        write!(f, "{}...", param.ty)?;
+                    } else {
+                        write!(f, "{}", param.ty)?;
+                    }
+                }
+                if let Some(vararg) = &sig.vararg {
+                    if !sig.params.is_empty() {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "{}...", vararg)?;
+                }
+                write!(f, ")")?;
+                if !sig.returns.is_empty() {
+                    write!(f, ": {}", sig.returns[0])?;
+                    for ret in sig.returns.iter().skip(1) {
+                        write!(f, ", {}", ret)?;
+                    }
+                }
+                Ok(())
             }
             _ => f.write_str(self.describe()),
         }

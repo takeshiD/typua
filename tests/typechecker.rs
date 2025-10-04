@@ -212,6 +212,79 @@ fn workspace_multi_return_mismatch_reports_diagnostic() {
 }
 
 #[test]
+fn function_return_annotation_propagates_function_type() {
+    let source = unindent(
+        r#"
+    ---@param x number
+    ---@return fun(y: number): number
+    local function gen_const(x)
+        return function(y)
+            return y + x
+        end
+    end
+    local const = gen_const(12)
+    local result_value = const(3)
+    "#,
+    );
+
+    let ast = parse_source(&source);
+    let result = check_ast(Path::new("function-return.lua"), &source, &ast);
+
+    assert!(
+        result.diagnostics.is_empty(),
+        "unexpected diagnostics: {:?}",
+        result.diagnostics
+    );
+
+    let const_entry = result
+        .type_map
+        .iter()
+        .find(|(pos, info)| pos.row == 8 && info.ty == "fun(number): number")
+        .expect("missing type info for const");
+    assert_eq!(const_entry.1.ty, "fun(number): number");
+
+    let value_entry = result
+        .type_map
+        .iter()
+        .find(|(pos, info)| pos.row == 9 && info.ty == "number")
+        .expect("missing type info for result_value");
+    assert_eq!(value_entry.1.ty, "number");
+}
+
+#[test]
+fn class_field_function_annotation_sets_function_type() {
+    let source = unindent(
+        r#"
+    ---@class ConstGenerator
+    ---@field gen_const fun(y: number): number
+
+    ---@type ConstGenerator
+    local const = {}
+
+    const.gen_const = function (y)
+        return y
+    end
+    "#,
+    );
+
+    let ast = parse_source(&source);
+    let result = check_ast(Path::new("const-generator.lua"), &source, &ast);
+
+    assert!(
+        result.diagnostics.is_empty(),
+        "unexpected diagnostics: {:?}",
+        result.diagnostics
+    );
+
+    let field_entry = result
+        .type_map
+        .iter()
+        .find(|(pos, info)| pos.row == 7 && info.ty == "fun(number): number")
+        .expect("missing type info for const.gen_const");
+    assert_eq!(field_entry.1.ty, "fun(number): number");
+}
+
+#[test]
 fn multi_return_scripts_match_expected_patterns() {
     let ok_source = include_str!("scripts/multi-return-ok.lua");
     assert!(ok_source.contains("---@return number? result"));

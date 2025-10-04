@@ -200,21 +200,62 @@ pub(crate) fn parse_annotation(line: &str) -> Option<Annotation> {
     }
 
     if let Some(rest) = line.strip_prefix("---@param") {
-        let mut parts = rest.split_whitespace();
-        let name = parts.next()?.to_string();
-        let type_token = parts.next().unwrap_or("any");
+        let trimmed = rest.trim();
+        if trimmed.is_empty() {
+            let ty = AnnotatedType::new("any".to_string(), parse_type("any"));
+            return Some(Annotation {
+                usage: AnnotationUsage::Param,
+                name: None,
+                ty,
+            });
+        }
+
+        let mut split_index = trimmed.len();
+        for (idx, ch) in trimmed.char_indices() {
+            if ch.is_whitespace() {
+                split_index = idx;
+                break;
+            }
+        }
+
+        let (name_part, type_part) = trimmed.split_at(split_index);
+        let type_token = type_part.trim();
+        let type_token = if type_token.is_empty() {
+            "any"
+        } else {
+            type_token
+        };
         let ty = AnnotatedType::new(type_token.to_string(), parse_type(type_token));
         return Some(Annotation {
             usage: AnnotationUsage::Param,
-            name: Some(name),
+            name: Some(name_part.to_string()),
             ty,
         });
     }
 
     if let Some(rest) = line.strip_prefix("---@return") {
-        let mut parts = rest.split_whitespace();
-        let type_token = parts.next().unwrap_or("any");
-        let name = parts.next().map(|value| value.to_string());
+        let trimmed = rest.trim();
+        if trimmed.is_empty() {
+            let ty = AnnotatedType::new("any".to_string(), parse_type("any"));
+            return Some(Annotation {
+                usage: AnnotationUsage::Return,
+                name: None,
+                ty,
+            });
+        }
+
+        let tokens: Vec<&str> = trimmed.split_whitespace().collect();
+        let (type_token, name) = if tokens.len() == 1 {
+            (trimmed, None)
+        } else if tokens.len() == 2
+            && tokens[1]
+                .chars()
+                .all(|ch| ch == '_' || ch.is_alphanumeric())
+        {
+            (tokens[0], Some(tokens[1].to_string()))
+        } else {
+            (trimmed, None)
+        };
         let ty = AnnotatedType::new(type_token.to_string(), parse_type(type_token));
         return Some(Annotation {
             usage: AnnotationUsage::Return,
@@ -614,9 +655,9 @@ pub(crate) fn parse_enum_declaration(line: &str) -> Option<String> {
 
 pub(crate) fn parse_field_declaration(line: &str) -> Option<(String, AnnotatedType)> {
     let rest = line.strip_prefix("---@field")?.trim();
-    let mut parts = rest.split_whitespace();
-    let name = parts.next()?.trim();
-    let type_token = parts.next().unwrap_or("any");
+    let mut iter = rest.splitn(2, char::is_whitespace);
+    let name = iter.next()?.trim();
+    let type_token = iter.next().unwrap_or("any").trim();
     let ty = AnnotatedType::new(type_token.to_string(), parse_type(type_token));
     Some((name.to_string(), ty))
 }

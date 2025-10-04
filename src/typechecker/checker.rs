@@ -18,8 +18,9 @@ use crate::{
 
 use super::typed_ast;
 use super::types::{
-    AnnotatedType, Annotation, AnnotationIndex, AnnotationUsage, OperandSide, ReturnAnnotation,
-    TypeKind, TypeRegistry,
+    AnnotatedType, Annotation, AnnotationIndex, AnnotationUsage,
+    FunctionParam as TypeFunctionParam, FunctionType, OperandSide, ReturnAnnotation, TypeKind,
+    TypeRegistry,
 };
 
 pub use super::types::{CheckReport, CheckResult, TypeInfo};
@@ -468,7 +469,9 @@ impl<'a> TypeChecker<'a> {
         let mut annotations = local_fn.annotations.clone();
         let mut param_annotations = local_fn.param_types.clone();
 
-        let inferred = TypeKind::Function;
+        let inferred =
+            self.build_function_signature(&local_fn.params, &param_annotations, &local_fn.returns);
+
         let (ty, annotated) =
             self.apply_type_annotation(&local_fn.name, inferred, &mut annotations);
         self.assign_local(&local_fn.name.name, local_fn.name.range, ty, annotated);
@@ -491,8 +494,10 @@ impl<'a> TypeChecker<'a> {
         let mut annotations = function.annotations.clone();
         let mut param_annotations = function.param_types.clone();
 
+        let inferred =
+            self.build_function_signature(&function.params, &param_annotations, &function.returns);
+
         if let Some(identifier) = function.name.last_component() {
-            let inferred = TypeKind::Function;
             let (ty, annotated) =
                 self.apply_type_annotation(identifier, inferred, &mut annotations);
             self.assign_nonlocal(&identifier.name, identifier.range, ty, annotated);
@@ -626,6 +631,52 @@ impl<'a> TypeChecker<'a> {
                 self.assign_local(&identifier.name, identifier.range, ty, annotated_param);
             }
         }
+    }
+
+    fn build_function_signature(
+        &self,
+        params: &[typed_ast::FunctionParam],
+        param_annotations: &HashMap<String, AnnotatedType>,
+        returns: &[ReturnAnnotation],
+    ) -> TypeKind {
+        let mut fn_type = FunctionType::default();
+
+        for param in params {
+            let name = param.name.as_ref().map(|id| id.name.clone());
+            let mut ty = TypeKind::Unknown;
+            if let Some(name_str) = name.as_deref()
+                && let Some(annotation) = param_annotations.get(name_str)
+            {
+                if let Some(resolved) = self.resolve_annotation_kind(annotation) {
+                    ty = resolved;
+                } else if let Some(kind) = &annotation.kind {
+                    ty = kind.clone();
+                }
+            }
+
+            if param.is_vararg {
+                fn_type.vararg = Some(Box::new(ty.clone()));
+            }
+
+            fn_type.params.push(TypeFunctionParam {
+                name,
+                ty,
+                is_self: false,
+                is_vararg: param.is_vararg,
+            });
+        }
+
+        for ret in returns {
+            if let Some(resolved) = self.resolve_annotation_kind(&ret.ty) {
+                fn_type.returns.push(resolved);
+            } else if let Some(kind) = &ret.ty.kind {
+                fn_type.returns.push(kind.clone());
+            } else {
+                fn_type.returns.push(TypeKind::Unknown);
+            }
+        }
+
+        TypeKind::FunctionSig(Box::new(fn_type))
     }
 
     fn analyze_condition(expr: &typed_ast::Expr) -> ConditionEffect {
@@ -932,13 +983,49 @@ impl<'a> TypeChecker<'a> {
                 operator,
                 right,
             } => self.infer_binary(left, operator, right),
-            typed_ast::ExprKind::Call(_) | typed_ast::ExprKind::MethodCall(_) => TypeKind::Unknown,
+            typed_ast::ExprKind::Call(call) => self.infer_call_expression(call),
+            typed_ast::ExprKind::MethodCall(_) => TypeKind::Unknown,
             typed_ast::ExprKind::Name(identifier) => {
                 self.lookup(&identifier.name).unwrap_or(TypeKind::Unknown)
             }
             typed_ast::ExprKind::Boolean(_) => TypeKind::Boolean,
             typed_ast::ExprKind::Nil => TypeKind::Nil,
             _ => TypeKind::Unknown,
+        }
+    }
+
+    fn infer_call_expression(&mut self, call: &typed_ast::CallExpr) -> TypeKind {
+        let callee_type = self.infer_expression(&call.function);
+        Self::call_return_type(&callee_type).unwrap_or(TypeKind::Unknown)
+    }
+
+    fn call_return_type(callee: &TypeKind) -> Option<TypeKind> {
+        match callee {
+            TypeKind::FunctionSig(signature) => {
+                if signature.returns.is_empty() {
+                    Some(TypeKind::Nil)
+                } else if signature.returns.len() == 1 {
+                    Some(signature.returns[0].clone())
+                } else {
+                    Some(TypeKind::Union(signature.returns.clone()))
+                }
+            }
+            TypeKind::Union(types) => {
+                let mut collected = Vec::new();
+                for ty in types {
+                    if let Some(ret) = Self::call_return_type(ty) {
+                        collected.push(ret);
+                    }
+                }
+                if collected.is_empty() {
+                    None
+                } else if collected.len() == 1 {
+                    Some(collected.into_iter().next().unwrap())
+                } else {
+                    Some(TypeKind::Union(collected))
+                }
+            }
+            _ => None,
         }
     }
 
