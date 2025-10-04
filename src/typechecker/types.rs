@@ -279,6 +279,7 @@ impl ClassInfo {
 pub struct TypeRegistry {
     pub classes: HashMap<String, ClassInfo>,
     pub enums: HashMap<String, ()>,
+    pub aliases: HashMap<String, AnnotatedType>,
 }
 
 impl TypeRegistry {
@@ -296,6 +297,10 @@ impl TypeRegistry {
         self.enums.insert(name.to_string(), ());
     }
 
+    pub fn register_alias(&mut self, name: String, ty: AnnotatedType) {
+        self.aliases.insert(name, ty);
+    }
+
     pub fn register_field(&mut self, class: &str, field: &str, ty: AnnotatedType) {
         let entry = self
             .classes
@@ -305,6 +310,9 @@ impl TypeRegistry {
     }
 
     pub fn resolve(&self, name: &str) -> Option<TypeKind> {
+        if let Some(alias) = self.resolve_alias(name) {
+            return Some(alias);
+        }
         if self.classes.contains_key(name) {
             Some(TypeKind::Custom(name.to_string()))
         } else if self.enums.contains_key(name) {
@@ -312,6 +320,10 @@ impl TypeRegistry {
         } else {
             None
         }
+    }
+
+    pub fn alias(&self, name: &str) -> Option<&AnnotatedType> {
+        self.aliases.get(name)
     }
 
     pub fn field_annotation(&self, class: &str, field: &str) -> Option<&AnnotatedType> {
@@ -352,13 +364,37 @@ impl TypeRegistry {
         for (name, ()) in &other.enums {
             self.enums.insert(name.clone(), ());
         }
+
+        for (name, alias) in &other.aliases {
+            self.aliases.insert(name.clone(), alias.clone());
+        }
     }
 
     pub fn normalize_type(&self, ty: TypeKind) -> TypeKind {
-        let _ = self;
+        self.normalize_type_internal(ty, &mut Vec::new())
+    }
+
+    fn resolve_alias(&self, name: &str) -> Option<TypeKind> {
+        let mut visited = Vec::new();
+        self.resolve_alias_internal(name, &mut visited)
+    }
+
+    fn resolve_alias_internal(&self, name: &str, visited: &mut Vec<String>) -> Option<TypeKind> {
+        if visited.iter().any(|seen| seen == name) {
+            return Some(TypeKind::Unknown);
+        }
+        let alias = self.aliases.get(name)?;
+        let kind = alias.kind.clone().unwrap_or(TypeKind::Unknown);
+        visited.push(name.to_string());
+        let resolved = self.normalize_type_internal(kind, visited);
+        visited.pop();
+        Some(resolved)
+    }
+
+    fn normalize_type_internal(&self, ty: TypeKind, visited: &mut Vec<String>) -> TypeKind {
         match ty {
             TypeKind::Array(inner) => {
-                let normalized_inner = self.normalize_type(*inner);
+                let normalized_inner = self.normalize_type_internal(*inner, visited);
                 let inner = match normalized_inner {
                     TypeKind::FunctionSig(_) => TypeKind::Function,
                     other => other,
@@ -366,7 +402,11 @@ impl TypeRegistry {
                 TypeKind::Array(Box::new(inner))
             }
             TypeKind::Union(types) => {
-                TypeKind::Union(types.into_iter().map(|t| self.normalize_type(t)).collect())
+                let normalized: Vec<TypeKind> = types
+                    .into_iter()
+                    .map(|t| self.normalize_type_internal(t, visited))
+                    .collect();
+                Self::normalize_union(normalized)
             }
             TypeKind::FunctionSig(sig) => {
                 let params = sig
@@ -374,7 +414,7 @@ impl TypeRegistry {
                     .into_iter()
                     .map(|param| FunctionParam {
                         name: param.name,
-                        ty: self.normalize_type(param.ty),
+                        ty: self.normalize_type_internal(param.ty, visited),
                         is_self: param.is_self,
                         is_vararg: param.is_vararg,
                     })
@@ -382,11 +422,11 @@ impl TypeRegistry {
                 let returns = sig
                     .returns
                     .into_iter()
-                    .map(|ret| self.normalize_type(ret))
+                    .map(|ret| self.normalize_type_internal(ret, visited))
                     .collect();
                 let vararg = sig
                     .vararg
-                    .map(|vararg| Box::new(self.normalize_type(*vararg)));
+                    .map(|vararg| Box::new(self.normalize_type_internal(*vararg, visited)));
                 TypeKind::FunctionSig(Box::new(FunctionType {
                     params,
                     returns,
@@ -395,10 +435,10 @@ impl TypeRegistry {
                 }))
             }
             TypeKind::Applied { base, args } => {
-                let normalized_base = self.normalize_type(*base);
+                let normalized_base = self.normalize_type_internal(*base, visited);
                 let normalized_args: Vec<TypeKind> = args
                     .into_iter()
-                    .map(|arg| self.normalize_type(arg))
+                    .map(|arg| self.normalize_type_internal(arg, visited))
                     .collect();
                 if let TypeKind::Custom(name) = &normalized_base
                     && name == "Array"
@@ -411,7 +451,34 @@ impl TypeRegistry {
                     args: normalized_args,
                 }
             }
+            TypeKind::Custom(name) => {
+                if let Some(alias_ty) = self.resolve_alias_internal(&name, visited) {
+                    return alias_ty;
+                }
+                if self.enums.contains_key(&name) {
+                    return TypeKind::String;
+                }
+                TypeKind::Custom(name)
+            }
             other => other,
+        }
+    }
+
+    fn normalize_union(types: Vec<TypeKind>) -> TypeKind {
+        let mut flat: Vec<TypeKind> = Vec::new();
+        for ty in types {
+            match ty {
+                TypeKind::Union(inner) => flat.extend(inner),
+                other => flat.push(other),
+            }
+        }
+        flat.sort_by_key(|ty| ty.to_string());
+        flat.dedup_by(|a, b| a.matches(b));
+
+        if flat.len() == 1 {
+            flat.into_iter().next().unwrap()
+        } else {
+            TypeKind::Union(flat)
         }
     }
 }

@@ -8,6 +8,166 @@ use super::types::{
 
 use full_moon::tokenizer::{Lexer, LexerResult, Token, TokenType};
 
+#[derive(Debug)]
+struct AliasSegment {
+    raw: String,
+    kind: Option<TypeKind>,
+}
+
+#[derive(Debug)]
+struct AliasDeclaration {
+    name: String,
+    initial_segment: Option<AliasSegment>,
+    comment: Option<String>,
+}
+
+#[derive(Debug)]
+struct PendingAlias {
+    name: String,
+    comment: Option<String>,
+    segments: Vec<AliasSegment>,
+}
+
+impl PendingAlias {
+    fn new(name: String, comment: Option<String>) -> Self {
+        Self {
+            name,
+            comment,
+            segments: Vec::new(),
+        }
+    }
+
+    fn push_segment(&mut self, segment: AliasSegment) {
+        self.segments.push(segment);
+    }
+
+    fn build(self) -> Option<(String, AnnotatedType)> {
+        let PendingAlias {
+            name,
+            comment,
+            segments,
+        } = self;
+
+        if segments.is_empty() {
+            return None;
+        }
+
+        let mut raw_parts: Vec<String> = Vec::new();
+        let mut kinds: Vec<TypeKind> = Vec::new();
+        for segment in segments {
+            raw_parts.push(segment.raw);
+            if let Some(kind) = segment.kind {
+                kinds.push(kind);
+            }
+        }
+
+        let raw = if raw_parts.len() == 1 {
+            raw_parts.into_iter().next().unwrap()
+        } else {
+            raw_parts.join(" | ")
+        };
+
+        let kind = if kinds.is_empty() {
+            None
+        } else if kinds.len() == 1 {
+            Some(kinds.pop().unwrap())
+        } else {
+            Some(make_union(kinds))
+        };
+
+        let ty = AnnotatedType::with_comment(raw, kind, comment);
+        Some((name, ty))
+    }
+}
+
+fn normalize_alias_comment(comment: Option<String>) -> Option<String> {
+    comment.and_then(|text| {
+        let trimmed = text.trim();
+        if trimmed.is_empty() {
+            return None;
+        }
+        let without_hash = if let Some(rest) = trimmed.strip_prefix('#') {
+            rest.trim_start()
+        } else {
+            trimmed
+        };
+        if without_hash.is_empty() {
+            None
+        } else {
+            Some(without_hash.to_string())
+        }
+    })
+}
+
+fn parse_alias_declaration(line: &str) -> Option<AliasDeclaration> {
+    let rest = match_annotation(line, "alias")?;
+    let trimmed = rest.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    let mut iter = trimmed.splitn(2, char::is_whitespace);
+    let name = iter.next()?.trim();
+    if name.is_empty() {
+        return None;
+    }
+
+    let remainder = iter.next().unwrap_or("").trim();
+    if remainder.is_empty() {
+        return Some(AliasDeclaration {
+            name: name.to_string(),
+            initial_segment: None,
+            comment: None,
+        });
+    }
+
+    if remainder.starts_with('#') {
+        let comment = normalize_alias_comment(Some(remainder.to_string()));
+        return Some(AliasDeclaration {
+            name: name.to_string(),
+            initial_segment: None,
+            comment,
+        });
+    }
+
+    let (raw, kind, comment) = split_type_and_comment(remainder);
+    let comment = normalize_alias_comment(comment);
+    let initial_segment = if raw.is_empty() {
+        None
+    } else {
+        Some(AliasSegment { raw, kind })
+    };
+
+    Some(AliasDeclaration {
+        name: name.to_string(),
+        initial_segment,
+        comment,
+    })
+}
+
+fn parse_alias_variant(line: &str) -> Option<AliasSegment> {
+    let trimmed = line.trim_start();
+    let mut stripped = trimmed.trim_start_matches('-');
+    stripped = stripped.trim_start();
+    let remainder = stripped.strip_prefix('|')?.trim();
+    if remainder.is_empty() {
+        return None;
+    }
+    let (raw, kind, _) = split_type_and_comment(remainder);
+    if raw.is_empty() {
+        return None;
+    }
+    Some(AliasSegment { raw, kind })
+}
+
+fn finalize_pending_alias(pending: &mut Option<PendingAlias>, registry: &mut TypeRegistry) {
+    if let Some(alias) = pending.take()
+        && let Some((name, ty)) = alias.build()
+    {
+        registry.register_alias(name, ty);
+    }
+}
+
 impl AnnotationIndex {
     pub fn from_ast(ast: &ast::Ast, source: &str) -> (Self, TypeRegistry) {
         let _ = ast;
@@ -26,10 +186,40 @@ impl AnnotationIndex {
         let mut pending_classes: Vec<String> = Vec::new();
         let mut registry = TypeRegistry::default();
         let mut current_class: Option<String> = None;
+        let mut pending_alias: Option<PendingAlias> = None;
 
         for (idx, line) in source.lines().enumerate() {
             let line_no = idx + 1;
             let trimmed = line.trim_start();
+
+            if let Some(segment) = parse_alias_variant(trimmed) {
+                if let Some(alias) = pending_alias.as_mut() {
+                    alias.push_segment(segment);
+                }
+                continue;
+            }
+
+            if let Some(alias_decl) = parse_alias_declaration(trimmed) {
+                finalize_pending_alias(&mut pending_alias, &mut registry);
+                let AliasDeclaration {
+                    name,
+                    initial_segment,
+                    comment,
+                } = alias_decl;
+                let mut alias = PendingAlias::new(name, comment);
+                if let Some(segment) = initial_segment {
+                    alias.push_segment(segment);
+                }
+                pending_alias = Some(alias);
+                continue;
+            }
+
+            let stripped = trimmed.trim_start_matches('-').trim_start();
+            if trimmed.is_empty() || (trimmed.starts_with("--") && !stripped.starts_with('@')) {
+                continue;
+            }
+
+            finalize_pending_alias(&mut pending_alias, &mut registry);
 
             if let Some(decl) = parse_class_declaration(trimmed) {
                 pending_classes.push(decl.name.clone());
@@ -57,10 +247,6 @@ impl AnnotationIndex {
                 continue;
             }
 
-            if trimmed.is_empty() || (trimmed.starts_with("--") && !trimmed.starts_with("---@")) {
-                continue;
-            }
-
             if !pending_classes.is_empty() {
                 class_hints
                     .entry(line_no)
@@ -74,6 +260,8 @@ impl AnnotationIndex {
                 by_line.entry(line_no).or_default().append(&mut pending);
             }
         }
+
+        finalize_pending_alias(&mut pending_alias, &mut registry);
 
         (
             Self {
@@ -92,6 +280,7 @@ fn build_index_from_tokens(tokens: Vec<Token>, source: &str) -> (AnnotationIndex
     let mut pending_classes: Vec<String> = Vec::new();
     let mut registry = TypeRegistry::default();
     let mut current_class: Option<String> = None;
+    let mut pending_alias: Option<PendingAlias> = None;
     let lines: Vec<&str> = source.lines().collect();
 
     for token in tokens {
@@ -108,29 +297,59 @@ fn build_index_from_tokens(tokens: Vec<Token>, source: &str) -> (AnnotationIndex
             } else {
                 Cow::Borrowed(trimmed)
             };
+            let normalized_str = normalized.as_ref();
 
-            if let Some(decl) = parse_class_declaration(&normalized) {
+            if let Some(segment) = parse_alias_variant(normalized_str) {
+                if let Some(alias) = pending_alias.as_mut() {
+                    alias.push_segment(segment);
+                }
+                continue;
+            }
+
+            if let Some(alias_decl) = parse_alias_declaration(normalized_str) {
+                finalize_pending_alias(&mut pending_alias, &mut registry);
+                let AliasDeclaration {
+                    name,
+                    initial_segment,
+                    comment,
+                } = alias_decl;
+                let mut alias = PendingAlias::new(name, comment);
+                if let Some(segment) = initial_segment {
+                    alias.push_segment(segment);
+                }
+                pending_alias = Some(alias);
+                continue;
+            }
+
+            let stripped = normalized_str.trim_start_matches('-').trim_start();
+            if normalized_str.trim_start().starts_with("--") && !stripped.starts_with('@') {
+                continue;
+            }
+
+            finalize_pending_alias(&mut pending_alias, &mut registry);
+
+            if let Some(decl) = parse_class_declaration(normalized_str) {
                 pending_classes.push(decl.name.clone());
                 current_class = Some(decl.name.clone());
                 registry.register_class(decl);
                 continue;
             }
 
-            if let Some(name) = parse_enum_declaration(&normalized) {
+            if let Some(name) = parse_enum_declaration(normalized_str) {
                 registry.register_enum(&name);
                 current_class = None;
                 pending_classes.clear();
                 continue;
             }
 
-            if let Some((field_name, field_ty)) = parse_field_declaration(&normalized) {
+            if let Some((field_name, field_ty)) = parse_field_declaration(normalized_str) {
                 if let Some(class_name) = current_class.clone() {
                     registry.register_field(&class_name, &field_name, field_ty);
                 }
                 continue;
             }
 
-            if let Some(annotation) = parse_annotation(&normalized) {
+            if let Some(annotation) = parse_annotation(normalized_str) {
                 pending_annotations.push(annotation);
             }
 
@@ -144,6 +363,8 @@ fn build_index_from_tokens(tokens: Vec<Token>, source: &str) -> (AnnotationIndex
         if token.token_type().is_trivia() {
             continue;
         }
+
+        finalize_pending_alias(&mut pending_alias, &mut registry);
 
         let line = token.start_position().line();
         if line == 0 {
@@ -165,6 +386,8 @@ fn build_index_from_tokens(tokens: Vec<Token>, source: &str) -> (AnnotationIndex
                 .append(&mut pending_annotations);
         }
     }
+
+    finalize_pending_alias(&mut pending_alias, &mut registry);
 
     (
         AnnotationIndex {
@@ -303,6 +526,9 @@ fn split_type_and_comment(input: &str) -> (String, Option<TypeKind>, Option<Stri
     for split in (1..parts.len()).rev() {
         let candidate = parts[..split].join(" ");
         if let Some(kind) = parse_type(&candidate) {
+            if candidate.contains('#') {
+                continue;
+            }
             if candidate.trim_end().ends_with(':') {
                 continue;
             }
@@ -1000,5 +1226,68 @@ mod tests {
             .expect("annotation attached to statement");
         assert_eq!(line_ann[0].usage, AnnotationUsage::Type);
         assert_eq!(line_ann[0].ty.raw, "Foo");
+    }
+
+    #[test]
+    fn alias_single_line_registers_with_comment() {
+        let source = r#"
+        ---@alias userID integer The ID of a user
+        "#;
+        let ast = parse(source.unindent().as_str()).expect("parse failure");
+        let (_, registry) = AnnotationIndex::from_ast(&ast, source);
+        let alias = registry.alias("userID").expect("alias registered");
+        assert_eq!(alias.raw, "integer");
+        assert_eq!(alias.comment.as_deref(), Some("The ID of a user"));
+        assert_eq!(registry.resolve("userID"), Some(TypeKind::Integer));
+    }
+
+    #[test]
+    fn alias_multiline_union_registers() {
+        let source = r#"
+        ---@alias NumberOrString
+        ---| number
+        ---| string
+        "#;
+        let ast = parse(source.unindent().as_str()).expect("parse failure");
+        let (_, registry) = AnnotationIndex::from_ast(&ast, source);
+        let alias = registry.alias("NumberOrString").expect("alias registered");
+        assert_eq!(alias.raw, "number | string");
+
+        let resolved = registry.resolve("NumberOrString").expect("alias resolves");
+        match resolved {
+            TypeKind::Union(members) => {
+                assert!(members.contains(&TypeKind::Number));
+                assert!(members.contains(&TypeKind::String));
+            }
+            other => panic!("expected union, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn alias_resolves_nested_alias_references() {
+        let source = r#"
+        ---@alias UserID integer
+        ---@alias UserIDList UserID[]
+        "#;
+        let ast = parse(source.unindent().as_str()).expect("parse failure");
+        let (_, registry) = AnnotationIndex::from_ast(&ast, source);
+
+        let resolved = registry.resolve("UserIDList").expect("alias resolves");
+        match resolved {
+            TypeKind::Array(inner) => assert_eq!(*inner, TypeKind::Integer),
+            other => panic!("expected array alias, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn alias_comment_strips_hash_prefix() {
+        let source = r#"
+        ---@alias DeviceSide "left" # The left side
+        "#;
+        let ast = parse(source.unindent().as_str()).expect("parse failure");
+        let (_, registry) = AnnotationIndex::from_ast(&ast, source);
+        let alias = registry.alias("DeviceSide").expect("alias registered");
+        assert_eq!(alias.comment.as_deref(), Some("The left side"));
+        assert_eq!(registry.resolve("DeviceSide"), Some(TypeKind::String));
     }
 }
