@@ -1,8 +1,5 @@
-use std::{
-    collections::BTreeSet,
-    fs,
-    path::{Path, PathBuf},
-};
+use std::path::PathBuf;
+use std::{collections::BTreeSet, fs};
 
 use glob::{MatchOptions, glob_with};
 use tracing::{Level, event};
@@ -114,7 +111,7 @@ mod tests {
     use crate::config::Config;
     use std::fs::{self, File};
     use std::io::Write;
-    use std::path::PathBuf;
+    use std::path::{Path, PathBuf};
     use std::time::{SystemTime, UNIX_EPOCH};
 
     struct TestDir {

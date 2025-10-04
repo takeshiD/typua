@@ -1,3 +1,21 @@
+# Lsp Interface
+
+```mermaid
+classDiagram
+    class Lsp {
+        +initalize()
+        +did_open()
+        +did_change()
+        +did_close()
+        +hover()
+        +inlay_hint()
+    }
+    class DocumentState {
+        types: HashMap~Position, TypeInfo~
+    }
+    Lsp --> DocumentState
+```
+
 # Annotations
 
 Basicaly, compatibled lua-language-server.
