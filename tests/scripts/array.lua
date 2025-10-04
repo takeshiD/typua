@@ -3,9 +3,22 @@ local b_ary = { true }
 
 local a = b_ary
 
----@type vim.lsp.ClientConfig
+---@type lsp.ConfigurationParams
 local z = {}
+z.items = {
+    scopeUri = "hello",
+    section = "hello",
+}
 
-z.before_init = function()
+---@class Container
+---
+---
+---@field x number
 
-end
+
+---this is a user id
+---(1) user id
+---@field id number
+local con = {}
+con.x = 12
+con.id = 100
