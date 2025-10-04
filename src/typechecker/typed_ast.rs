@@ -5,7 +5,7 @@ use full_moon::ast::punctuated::Punctuated;
 use full_moon::node::Node;
 use full_moon::tokenizer::{Token, TokenReference};
 
-use super::types::{AnnotatedType, Annotation, AnnotationIndex, AnnotationUsage};
+use super::types::{AnnotatedType, Annotation, AnnotationIndex, AnnotationUsage, ReturnAnnotation};
 use crate::diagnostics::{TextPosition, TextRange};
 
 #[derive(Debug, Clone, PartialEq)]
@@ -77,7 +77,7 @@ pub struct Function {
     pub name: FunctionName,
     pub params: Vec<FunctionParam>,
     pub param_types: HashMap<String, AnnotatedType>,
-    pub returns: Vec<AnnotatedType>,
+    pub returns: Vec<ReturnAnnotation>,
     pub annotations: Vec<Annotation>,
     pub body: Block,
     pub range: TextRange,
@@ -110,7 +110,7 @@ pub struct LocalFunction {
     pub name: Identifier,
     pub params: Vec<FunctionParam>,
     pub param_types: HashMap<String, AnnotatedType>,
-    pub returns: Vec<AnnotatedType>,
+    pub returns: Vec<ReturnAnnotation>,
     pub annotations: Vec<Annotation>,
     pub body: Block,
     pub range: TextRange,
@@ -777,7 +777,7 @@ fn function_annotations(
     annotations: Vec<Annotation>,
 ) -> (
     HashMap<String, AnnotatedType>,
-    Vec<AnnotatedType>,
+    Vec<ReturnAnnotation>,
     Vec<Annotation>,
 ) {
     let mut params = HashMap::new();
@@ -791,7 +791,10 @@ fn function_annotations(
                     params.insert(name, ann.ty.clone());
                 }
             }
-            AnnotationUsage::Return => returns.push(ann.ty.clone()),
+            AnnotationUsage::Return => returns.push(ReturnAnnotation {
+                name: ann.name.clone(),
+                ty: ann.ty.clone(),
+            }),
             AnnotationUsage::Type => leftover.push(ann.clone()),
         }
     }
@@ -917,7 +920,35 @@ mod tests {
         assert_eq!(func.params.len(), 2);
         assert!(func.param_types.contains_key("a"));
         assert_eq!(func.returns.len(), 1);
+        assert!(func.returns[0].name.is_none());
+        assert_eq!(func.returns[0].ty.raw, "boolean");
         assert!(matches!(func.body.stmts.last(), Some(Stmt::Return(_))));
+    }
+
+    #[test]
+    fn capture_multiple_return_annotations_with_names() {
+        let source = unindent(
+            r#"
+            ---@return number result
+            ---@return string? err
+            local function multi()
+                return 1, "ok"
+            end
+            "#,
+        );
+
+        let (ast, annotations) = parse(&source);
+        let program = build_typed_ast(&source, &ast, &annotations);
+
+        let Stmt::LocalFunction(func) = &program.block.stmts[0] else {
+            panic!("expected local function stmt");
+        };
+
+        assert_eq!(func.returns.len(), 2);
+        assert_eq!(func.returns[0].name.as_deref(), Some("result"));
+        assert_eq!(func.returns[0].ty.raw, "number");
+        assert_eq!(func.returns[1].name.as_deref(), Some("err"));
+        assert_eq!(func.returns[1].ty.raw, "string?");
     }
 
     #[test]

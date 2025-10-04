@@ -18,8 +18,8 @@ use crate::{
 
 use super::typed_ast;
 use super::types::{
-    AnnotatedType, Annotation, AnnotationIndex, AnnotationUsage, OperandSide, TypeKind,
-    TypeRegistry,
+    AnnotatedType, Annotation, AnnotationIndex, AnnotationUsage, OperandSide, ReturnAnnotation,
+    TypeKind, TypeRegistry,
 };
 
 pub use super::types::{CheckReport, CheckResult, TypeInfo};
@@ -117,7 +117,7 @@ struct TypeChecker<'a> {
     diagnostics: Vec<Diagnostic>,
     scopes: Vec<HashMap<String, VariableEntry>>,
     type_registry: TypeRegistry,
-    return_expectations: Vec<Vec<AnnotatedType>>,
+    return_expectations: Vec<Vec<ReturnAnnotation>>,
     type_info: HashMap<DocumentPosition, TypeInfo>,
 }
 
@@ -290,10 +290,20 @@ impl<'a> TypeChecker<'a> {
 
         let expected_len = expectations.len();
         let actual_len = expr_info.len();
+        let expected_labels: Vec<String> = expectations
+            .iter()
+            .enumerate()
+            .map(|(idx, ann)| ann.name.clone().unwrap_or_else(|| format!("#{}", idx + 1)))
+            .collect();
+        let expected_detail = if expected_labels.is_empty() {
+            "no return annotations".to_string()
+        } else {
+            format!("expected: {}", expected_labels.join(", "))
+        };
 
         if actual_len > expected_len {
             let message = format!(
-                "function returns {actual_len} value(s) but only {expected_len} annotated via @return"
+                "function returns {actual_len} value(s) but only {expected_len} annotated via @return ({expected_detail})"
             );
             self.push_diagnostic(
                 Some(ret.range),
@@ -304,7 +314,7 @@ impl<'a> TypeChecker<'a> {
 
         if actual_len < expected_len {
             let message = format!(
-                "function annotated to return {expected_len} value(s) but this return statement provides {actual_len}"
+                "function annotated to return {expected_len} value(s) ({expected_detail}) but this return statement provides {actual_len}"
             );
             self.push_diagnostic(
                 Some(ret.range),
@@ -319,14 +329,16 @@ impl<'a> TypeChecker<'a> {
             }
 
             let actual = expr_info[idx].clone();
-            if let Some(expected) = self.resolve_annotation_kind(annotation)
+            if let Some(expected) = self.resolve_annotation_kind(&annotation.ty)
                 && !expected.matches(&actual)
             {
+                let label = annotation
+                    .name
+                    .clone()
+                    .unwrap_or_else(|| format!("#{}", idx + 1));
                 let message = format!(
-                    "return value #{} is annotated as type {} but inferred type is {}",
-                    idx + 1,
-                    annotation.raw,
-                    actual
+                    "return value '{label}' is annotated as type {} but inferred type is {}",
+                    annotation.ty.raw, actual
                 );
                 self.push_diagnostic(
                     Some(ret.range),
@@ -1654,7 +1666,11 @@ mod tests {
 
         assert_eq!(result.diagnostics.len(), 1);
         let diagnostic = &result.diagnostics[0];
-        assert!(diagnostic.message.contains("return value #1"));
+        assert!(
+            diagnostic.message.contains(
+                "return value '#1' is annotated as type number but inferred type is string"
+            )
+        );
     }
 
     #[test]

@@ -114,3 +114,127 @@ fn workspace_registry_allows_cross_file_class_usage() {
         result.diagnostics
     );
 }
+
+#[test]
+fn multi_return_function_respects_annotations() {
+    let source = include_str!("scripts/multi-return-ok.lua");
+    let ast = parse_source(source);
+    let result = check_ast(Path::new("multi-return-ok.lua"), source, &ast);
+    assert!(
+        result.diagnostics.is_empty(),
+        "unexpected diagnostics: {:?}",
+        result.diagnostics
+    );
+}
+
+#[test]
+fn multi_return_missing_value_reports_diagnostic() {
+    let source = include_str!("scripts/multi-return-missing.lua");
+    let ast = parse_source(source);
+    let result = check_ast(Path::new("multi-return-missing.lua"), source, &ast);
+
+    assert_eq!(result.diagnostics.len(), 1);
+    let diagnostic = &result.diagnostics[0];
+    assert!(
+        diagnostic
+            .message
+            .contains("function annotated to return 2 value(s) (expected: result, err)"),
+        "unexpected diagnostic message: {}",
+        diagnostic.message
+    );
+    assert_eq!(diagnostic.code, Some(DiagnosticCode::ReturnTypeMismatch));
+}
+
+#[test]
+fn multi_return_extra_value_reports_diagnostic() {
+    let source = include_str!("scripts/multi-return-extra.lua");
+    let ast = parse_source(source);
+    let result = check_ast(Path::new("multi-return-extra.lua"), source, &ast);
+
+    assert_eq!(result.diagnostics.len(), 1);
+    let diagnostic = &result.diagnostics[0];
+    assert!(
+        diagnostic
+            .message
+            .contains("function returns 2 value(s) but only 1 annotated via @return"),
+        "unexpected diagnostic message: {}",
+        diagnostic.message
+    );
+    assert_eq!(diagnostic.code, Some(DiagnosticCode::ReturnTypeMismatch));
+}
+
+#[test]
+fn multi_return_type_mismatch_reports_diagnostic() {
+    let source = include_str!("scripts/multi-return-type-mismatch.lua");
+    let ast = parse_source(source);
+    let result = check_ast(Path::new("multi-return-type-mismatch.lua"), source, &ast);
+
+    assert_eq!(result.diagnostics.len(), 1);
+    let diagnostic = &result.diagnostics[0];
+    assert!(
+        diagnostic
+            .message
+            .contains("return value 'err' is annotated as type string but inferred type is number"),
+        "unexpected diagnostic message: {}",
+        diagnostic.message
+    );
+    assert_eq!(diagnostic.code, Some(DiagnosticCode::ReturnTypeMismatch));
+}
+
+#[test]
+fn workspace_multi_return_mismatch_reports_diagnostic() {
+    let lib_source = include_str!("scripts/multi-return-workspace-lib.lua");
+    let lib_ast = parse_source(lib_source);
+    let (_, lib_registry) = AnnotationIndex::from_ast(&lib_ast, lib_source);
+
+    let mut workspace_registry = TypeRegistry::default();
+    workspace_registry.extend(&lib_registry);
+
+    let usage_source = include_str!("scripts/multi-return-extra.lua");
+    let usage_ast = parse_source(usage_source);
+    let result = check_ast_with_registry(
+        Path::new("multi-return-extra.lua"),
+        usage_source,
+        &usage_ast,
+        Some(&workspace_registry),
+    );
+
+    assert_eq!(result.diagnostics.len(), 1);
+    let diagnostic = &result.diagnostics[0];
+    assert!(
+        diagnostic
+            .message
+            .contains("function returns 2 value(s) but only 1 annotated via @return"),
+        "unexpected diagnostic message: {}",
+        diagnostic.message
+    );
+    assert_eq!(diagnostic.code, Some(DiagnosticCode::ReturnTypeMismatch));
+}
+
+#[test]
+fn multi_return_scripts_match_expected_patterns() {
+    let ok_source = include_str!("scripts/multi-return-ok.lua");
+    assert!(ok_source.contains("---@return number? result"));
+    assert!(ok_source.contains("---@return string? err"));
+    assert!(ok_source.contains("return x, nil"));
+    assert!(ok_source.contains("return nil, \"error\""));
+
+    let missing_source = include_str!("scripts/multi-return-missing.lua");
+    assert!(missing_source.contains("---@return number result"));
+    assert!(missing_source.contains("---@return string? err"));
+    assert!(missing_source.contains("return multi(1)"));
+
+    let extra_source = include_str!("scripts/multi-return-extra.lua");
+    assert!(extra_source.contains("---@return number result"));
+    assert!(extra_source.contains("return x, \"extra\""));
+
+    let mismatch_source = include_str!("scripts/multi-return-type-mismatch.lua");
+    assert!(mismatch_source.contains("---@return number result"));
+    assert!(mismatch_source.contains("---@return string err"));
+    assert!(mismatch_source.contains("return x, 1"));
+
+    let workspace_source = include_str!("scripts/multi-return-workspace-lib.lua");
+    assert!(workspace_source.contains("---@class Wrapper"));
+    assert!(workspace_source.contains("---@return Wrapper result"));
+    assert!(workspace_source.contains("---@return string? err"));
+}

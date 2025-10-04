@@ -284,6 +284,12 @@ impl AnnotatedType {
     }
 }
 
+#[derive(Clone, Debug, PartialEq)]
+pub struct ReturnAnnotation {
+    pub name: Option<String>,
+    pub ty: AnnotatedType,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AnnotationUsage {
     Type,
