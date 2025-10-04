@@ -2,6 +2,7 @@ use std::path::{Path, PathBuf};
 use std::{collections::BTreeSet, fs};
 
 use glob::{MatchOptions, glob_with};
+use ignore::gitignore::{Gitignore, GitignoreBuilder};
 use tracing::{Level, event};
 use walkdir::WalkDir;
 
@@ -10,7 +11,7 @@ use crate::{
     error::{Result, TypuaError},
 };
 
-pub fn collect_source_files(target: &PathBuf, _config: &Config) -> Result<Vec<PathBuf>> {
+pub fn collect_source_files(target: &PathBuf, config: &Config) -> Result<Vec<PathBuf>> {
     event!(Level::DEBUG, "get metadata {:#?}", target);
     let metadata = fs::metadata(target).map_err(|source| TypuaError::Metadata {
         path: target.to_path_buf(),
@@ -29,6 +30,10 @@ pub fn collect_source_files(target: &PathBuf, _config: &Config) -> Result<Vec<Pa
 
     let root = canonicalize_path(target);
     let mut files = BTreeSet::new();
+
+    let ignore_dirs = resolve_ignore_dirs(&root, &config.workspace.ignore_dir);
+    let gitignore = build_gitignore(&root, config.workspace.use_gitignore);
+
     // for pattern in &config.runtime.path {
     //     let expanded = expand_pattern(pattern);
     //     event!(Level::DEBUG, "expanded pattern {:#?}", expanded);
@@ -48,7 +53,7 @@ pub fn collect_source_files(target: &PathBuf, _config: &Config) -> Result<Vec<Pa
     //     }
     // }
     if files.is_empty() {
-        collect_from_directory(&root, &mut files)?;
+        collect_from_directory_with_filters(&root, &mut files, &ignore_dirs, gitignore.as_ref())?;
     }
     Ok(files.into_iter().collect())
 }
@@ -152,6 +157,36 @@ fn collect_from_directory(root: &Path, files: &mut BTreeSet<PathBuf>) -> Result<
     Ok(())
 }
 
+fn collect_from_directory_with_filters(
+    root: &Path,
+    files: &mut BTreeSet<PathBuf>,
+    ignore_dirs: &[PathBuf],
+    gitignore: Option<&Gitignore>,
+) -> Result<()> {
+    let mut walker = WalkDir::new(root).into_iter();
+    while let Some(entry) = walker.next() {
+        let entry = entry.map_err(|source| TypuaError::WalkDir {
+            path: root.to_path_buf(),
+            source,
+        })?;
+        let path = entry.path();
+        if entry.file_type().is_dir() {
+            if should_ignore_dir(path, ignore_dirs, gitignore) {
+                walker.skip_current_dir();
+            }
+            continue;
+        }
+
+        if entry.file_type().is_file() {
+            if should_ignore_file(path, gitignore) {
+                continue;
+            }
+            push_if_lua(path, files);
+        }
+    }
+    Ok(())
+}
+
 fn push_if_lua(path: &Path, files: &mut BTreeSet<PathBuf>) {
     if path
         .extension()
@@ -164,6 +199,81 @@ fn push_if_lua(path: &Path, files: &mut BTreeSet<PathBuf>) {
 
 fn canonicalize_path(path: &Path) -> PathBuf {
     path.canonicalize().unwrap_or_else(|_| path.to_path_buf())
+}
+
+fn resolve_ignore_dirs(root: &Path, entries: &[String]) -> Vec<PathBuf> {
+    entries
+        .iter()
+        .filter_map(|entry| {
+            let expanded = expand_pattern(entry);
+            let trimmed = expanded.trim();
+            if trimmed.is_empty() {
+                return None;
+            }
+            let candidate = if Path::new(trimmed).is_absolute() {
+                PathBuf::from(trimmed)
+            } else {
+                root.join(trimmed)
+            };
+            Some(canonicalize_path(&candidate))
+        })
+        .collect()
+}
+
+fn build_gitignore(root: &Path, enabled: bool) -> Option<Gitignore> {
+    if !enabled {
+        return None;
+    }
+    let gitignore_path = root.join(".gitignore");
+    if !gitignore_path.exists() {
+        return None;
+    }
+
+    let mut builder = GitignoreBuilder::new(root);
+    if let Some(error) = builder.add(&gitignore_path) {
+        event!(
+            Level::WARN,
+            ?gitignore_path,
+            ?error,
+            "failed to add .gitignore; ignoring it"
+        );
+        return None;
+    }
+    match builder.build() {
+        Ok(gitignore) => Some(gitignore),
+        Err(error) => {
+            event!(
+                Level::WARN,
+                ?gitignore_path,
+                ?error,
+                "failed to parse .gitignore; ignoring it"
+            );
+            None
+        }
+    }
+}
+
+fn should_ignore_dir(path: &Path, ignore_dirs: &[PathBuf], gitignore: Option<&Gitignore>) -> bool {
+    if ignore_dirs.iter().any(|dir| path.starts_with(dir)) {
+        return true;
+    }
+    if let Some(gitignore) = gitignore {
+        let matched = gitignore.matched_path_or_any_parents(path, true);
+        if matched.is_ignore() {
+            return true;
+        }
+    }
+    false
+}
+
+fn should_ignore_file(path: &Path, gitignore: Option<&Gitignore>) -> bool {
+    if let Some(gitignore) = gitignore {
+        let matched = gitignore.matched_path_or_any_parents(path, false);
+        if matched.is_ignore() {
+            return true;
+        }
+    }
+    false
 }
 
 fn workspace_base(target: &Path) -> PathBuf {
@@ -282,6 +392,71 @@ mod tests {
         assert_eq!(canonical_files.len(), 2);
         assert!(canonical_files.contains(&lua_root.canonicalize().unwrap()));
         assert!(canonical_files.contains(&lua_sub.canonicalize().unwrap()));
+    }
+
+    #[test]
+    fn collect_source_files_skips_ignore_dirs() {
+        let temp = TestDir::new();
+        let root = temp.path();
+        let main_path = root.join("main.lua");
+        let mut file = File::create(&main_path).expect("create main.lua");
+        writeln!(file, "print('kept')").expect("write main.lua");
+        drop(file);
+
+        let target_dir = root.join("target");
+        fs::create_dir_all(&target_dir).expect("create target dir");
+        let ignored_path = target_dir.join("ignored.lua");
+        let mut file = File::create(&ignored_path).expect("create ignored.lua");
+        writeln!(file, "print('ignored')").expect("write ignored.lua");
+        drop(file);
+
+        let mut config = Config::default();
+        config.workspace.ignore_dir = vec!["target".to_string()];
+
+        let files =
+            collect_source_files(&root.to_path_buf(), &config).expect("collect source files");
+        let canonical: Vec<PathBuf> = files
+            .into_iter()
+            .map(|path| path.canonicalize().unwrap())
+            .collect();
+
+        assert_eq!(canonical.len(), 1);
+        assert!(canonical.contains(&main_path.canonicalize().unwrap()));
+        assert!(!canonical.contains(&ignored_path.canonicalize().unwrap()));
+    }
+
+    #[test]
+    fn collect_source_files_respects_gitignore() {
+        let temp = TestDir::new();
+        let root = temp.path();
+        let gitignore_path = root.join(".gitignore");
+        let mut gitignore = File::create(&gitignore_path).expect("create .gitignore");
+        writeln!(gitignore, "ignored.lua").expect("write .gitignore");
+        drop(gitignore);
+
+        let kept_path = root.join("kept.lua");
+        let mut file = File::create(&kept_path).expect("create kept.lua");
+        writeln!(file, "return {{}}").expect("write kept.lua");
+        drop(file);
+
+        let ignored_path = root.join("ignored.lua");
+        let mut file = File::create(&ignored_path).expect("create ignored.lua");
+        writeln!(file, "return {{}}").expect("write ignored.lua");
+        drop(file);
+
+        let mut config = Config::default();
+        config.workspace.use_gitignore = true;
+
+        let files =
+            collect_source_files(&root.to_path_buf(), &config).expect("collect source files");
+        let canonical: Vec<PathBuf> = files
+            .into_iter()
+            .map(|path| path.canonicalize().unwrap())
+            .collect();
+
+        assert_eq!(canonical.len(), 1);
+        assert!(canonical.contains(&kept_path.canonicalize().unwrap()));
+        assert!(!canonical.contains(&ignored_path.canonicalize().unwrap()));
     }
 
     #[test]

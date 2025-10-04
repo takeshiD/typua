@@ -75,9 +75,20 @@ pub enum RuntimeVersion {
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
-#[derive(Default)]
 pub struct WorkspaceConfig {
     pub library: Vec<String>,
+    pub ignore_dir: Vec<String>,
+    pub use_gitignore: bool,
+}
+
+impl Default for WorkspaceConfig {
+    fn default() -> Self {
+        Self {
+            library: Vec::new(),
+            ignore_dir: vec![".vscode".to_string()],
+            use_gitignore: false,
+        }
+    }
 }
 
 #[cfg(test)]
@@ -130,6 +141,8 @@ mod tests {
         assert!(matches!(config.runtime.version, RuntimeVersion::Luajit));
         assert!(config.runtime.path.is_empty());
         assert!(config.workspace.library.is_empty());
+        assert!(config.workspace.ignore_dir.is_empty());
+        assert!(!config.workspace.use_gitignore);
     }
 
     #[test]
@@ -144,6 +157,8 @@ mod tests {
             
             [workspace]
             library = ["/opt/lua"]
+            ignore_dir = ["target"]
+            use_gitignore = true
         "#,
         );
         write_config(&config_path, &toml_source);
@@ -153,5 +168,7 @@ mod tests {
         assert_eq!(config.runtime.path, vec!["src/*.lua".to_string()]);
         assert!(!config.runtime.path_strict);
         assert_eq!(config.workspace.library, vec!["/opt/lua".to_string()]);
+        assert_eq!(config.workspace.ignore_dir, vec!["target".to_string()]);
+        assert!(config.workspace.use_gitignore);
     }
 }
