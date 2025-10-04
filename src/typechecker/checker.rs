@@ -1662,7 +1662,8 @@ mod tests {
                 name: None,
                 ty: AnnotatedType {
                     raw: "number".to_string(),
-                    kind: Some(TypeKind::Number)
+                    kind: Some(TypeKind::Number),
+                    comment: None,
                 }
             }
         );
@@ -1674,7 +1675,8 @@ mod tests {
                 name: None,
                 ty: AnnotatedType {
                     raw: "number?".to_string(),
-                    kind: Some(make_union(vec![TypeKind::Number, TypeKind::Nil]))
+                    kind: Some(make_union(vec![TypeKind::Number, TypeKind::Nil])),
+                    comment: None,
                 }
             }
         );
@@ -1686,7 +1688,8 @@ mod tests {
                 name: None,
                 ty: AnnotatedType {
                     raw: "number | string".to_string(),
-                    kind: Some(make_union(vec![TypeKind::Number, TypeKind::String]))
+                    kind: Some(make_union(vec![TypeKind::Number, TypeKind::String])),
+                    comment: None,
                 }
             }
         );
@@ -1699,6 +1702,7 @@ mod tests {
                 ty: AnnotatedType {
                     raw: "number[]".to_string(),
                     kind: Some(TypeKind::Array(Box::new(TypeKind::Number))),
+                    comment: None,
                 }
             }
         );

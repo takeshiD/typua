@@ -199,10 +199,10 @@ pub(crate) fn parse_annotation(line: &str) -> Option<Annotation> {
         });
     }
 
-    if let Some(rest) = line.strip_prefix("---@param") {
+    if let Some(rest) = match_annotation(line, "param") {
         let trimmed = rest.trim();
         if trimmed.is_empty() {
-            let ty = AnnotatedType::new("any".to_string(), parse_type("any"));
+            let ty = AnnotatedType::with_comment("any".to_string(), parse_type("any"), None);
             return Some(Annotation {
                 usage: AnnotationUsage::Param,
                 name: None,
@@ -210,22 +210,11 @@ pub(crate) fn parse_annotation(line: &str) -> Option<Annotation> {
             });
         }
 
-        let mut split_index = trimmed.len();
-        for (idx, ch) in trimmed.char_indices() {
-            if ch.is_whitespace() {
-                split_index = idx;
-                break;
-            }
-        }
-
-        let (name_part, type_part) = trimmed.split_at(split_index);
-        let type_token = type_part.trim();
-        let type_token = if type_token.is_empty() {
-            "any"
-        } else {
-            type_token
-        };
-        let ty = AnnotatedType::new(type_token.to_string(), parse_type(type_token));
+        let mut iter = trimmed.splitn(2, char::is_whitespace);
+        let name_part = iter.next()?.trim();
+        let rest = iter.next().unwrap_or("");
+        let (type_raw, type_kind, comment) = split_type_and_comment(rest);
+        let ty = AnnotatedType::with_comment(type_raw, type_kind, comment);
         return Some(Annotation {
             usage: AnnotationUsage::Param,
             name: Some(name_part.to_string()),
@@ -233,10 +222,10 @@ pub(crate) fn parse_annotation(line: &str) -> Option<Annotation> {
         });
     }
 
-    if let Some(rest) = line.strip_prefix("---@return") {
+    if let Some(rest) = match_annotation(line, "return") {
         let trimmed = rest.trim();
         if trimmed.is_empty() {
-            let ty = AnnotatedType::new("any".to_string(), parse_type("any"));
+            let ty = AnnotatedType::with_comment("any".to_string(), parse_type("any"), None);
             return Some(Annotation {
                 usage: AnnotationUsage::Return,
                 name: None,
@@ -248,7 +237,7 @@ pub(crate) fn parse_annotation(line: &str) -> Option<Annotation> {
             return Some(Annotation {
                 usage: AnnotationUsage::Return,
                 name: None,
-                ty: AnnotatedType::new(trimmed.to_string(), None),
+                ty: AnnotatedType::with_comment(trimmed.to_string(), None, None),
             });
         }
 
@@ -264,7 +253,7 @@ pub(crate) fn parse_annotation(line: &str) -> Option<Annotation> {
         } else {
             (trimmed, None)
         };
-        let ty = AnnotatedType::new(type_token.to_string(), parse_type(type_token));
+        let ty = AnnotatedType::with_comment(type_token.to_string(), parse_type(type_token), None);
         return Some(Annotation {
             usage: AnnotationUsage::Return,
             name,
@@ -272,9 +261,8 @@ pub(crate) fn parse_annotation(line: &str) -> Option<Annotation> {
         });
     }
 
-    if let Some(rest) = line
-        .strip_prefix("---@generics")
-        .or_else(|| line.strip_prefix("---@generic"))
+    if let Some(rest) =
+        match_annotation(line, "generics").or_else(|| match_annotation(line, "generic"))
     {
         let trimmed = rest.trim();
         if trimmed.is_empty() {
@@ -284,10 +272,54 @@ pub(crate) fn parse_annotation(line: &str) -> Option<Annotation> {
         return Some(Annotation {
             usage: AnnotationUsage::Generic,
             name: Some(trimmed.to_string()),
-            ty: AnnotatedType::new("any".to_string(), None),
+            ty: AnnotatedType::with_comment("any".to_string(), None, None),
         });
     }
     None
+}
+
+fn match_annotation<'a>(line: &'a str, key: &str) -> Option<&'a str> {
+    let trimmed = line.trim_start();
+    if let Some(rest) = trimmed.strip_prefix('@') {
+        return rest.strip_prefix(key);
+    }
+    let stripped = trimmed.trim_start_matches('-');
+    if stripped.len() == trimmed.len() {
+        return None;
+    }
+    let stripped = stripped.trim_start();
+    let rest = stripped.strip_prefix('@')?;
+    rest.strip_prefix(key)
+}
+
+fn split_type_and_comment(input: &str) -> (String, Option<TypeKind>, Option<String>) {
+    let trimmed = input.trim();
+    if trimmed.is_empty() {
+        let raw = "any".to_string();
+        return (raw.clone(), parse_type(&raw), None);
+    }
+
+    let parts: Vec<&str> = trimmed.split_whitespace().collect();
+    for split in (1..parts.len()).rev() {
+        let candidate = parts[..split].join(" ");
+        if let Some(kind) = parse_type(&candidate) {
+            if candidate.trim_end().ends_with(':') {
+                continue;
+            }
+            if candidate.contains(' ') && matches!(kind, TypeKind::Custom(_)) {
+                continue;
+            }
+            let comment = parts[split..].join(" ");
+            let comment = if comment.is_empty() {
+                None
+            } else {
+                Some(comment)
+            };
+            return (candidate, Some(kind), comment);
+        }
+    }
+
+    (trimmed.to_string(), parse_type(trimmed), None)
 }
 
 pub(crate) fn parse_type(raw: &str) -> Option<TypeKind> {
@@ -642,7 +674,7 @@ pub(crate) fn make_union(types: Vec<TypeKind>) -> TypeKind {
 }
 
 pub(crate) fn parse_class_declaration(line: &str) -> Option<ClassDeclaration> {
-    let rest = line.strip_prefix("---@class")?.trim();
+    let rest = match_annotation(line, "class")?.trim();
     let (rest, exact) = if let Some(remaining) = rest.strip_prefix("(exact)") {
         (remaining.trim(), true)
     } else {
@@ -685,7 +717,7 @@ pub(crate) fn parse_class_declaration(line: &str) -> Option<ClassDeclaration> {
 }
 
 pub(crate) fn parse_enum_declaration(line: &str) -> Option<String> {
-    let rest = line.strip_prefix("---@enum")?.trim();
+    let rest = match_annotation(line, "enum")?.trim();
     let name = rest.split_whitespace().next()?;
     if name.is_empty() {
         return None;
@@ -694,11 +726,12 @@ pub(crate) fn parse_enum_declaration(line: &str) -> Option<String> {
 }
 
 pub(crate) fn parse_field_declaration(line: &str) -> Option<(String, AnnotatedType)> {
-    let rest = line.strip_prefix("---@field")?.trim();
+    let rest = match_annotation(line, "field")?.trim();
     let mut iter = rest.splitn(2, char::is_whitespace);
     let name = iter.next()?.trim();
-    let type_token = iter.next().unwrap_or("any").trim();
-    let ty = AnnotatedType::new(type_token.to_string(), parse_type(type_token));
+    let remaining = iter.next().unwrap_or("any");
+    let (type_raw, type_kind, comment) = split_type_and_comment(remaining);
+    let ty = AnnotatedType::with_comment(type_raw, type_kind, comment);
     Some((name.to_string(), ty))
 }
 
@@ -718,7 +751,8 @@ mod tests {
                 name: None,
                 ty: AnnotatedType {
                     raw: "number".to_string(),
-                    kind: Some(TypeKind::Number)
+                    kind: Some(TypeKind::Number),
+                    comment: None,
                 }
             }
         );
@@ -729,7 +763,8 @@ mod tests {
                 name: None,
                 ty: AnnotatedType {
                     raw: "number?".to_string(),
-                    kind: Some(make_union(vec![TypeKind::Number, TypeKind::Nil]))
+                    kind: Some(make_union(vec![TypeKind::Number, TypeKind::Nil])),
+                    comment: None,
                 }
             }
         );
@@ -740,7 +775,8 @@ mod tests {
                 name: None,
                 ty: AnnotatedType {
                     raw: "number | string".to_string(),
-                    kind: Some(make_union(vec![TypeKind::Number, TypeKind::String]))
+                    kind: Some(make_union(vec![TypeKind::Number, TypeKind::String])),
+                    comment: None,
                 }
             }
         );
@@ -751,7 +787,8 @@ mod tests {
                 name: None,
                 ty: AnnotatedType {
                     raw: "number[]".to_string(),
-                    kind: Some(TypeKind::Array(Box::new(TypeKind::Number)))
+                    kind: Some(TypeKind::Array(Box::new(TypeKind::Number))),
+                    comment: None,
                 }
             }
         );
@@ -765,7 +802,8 @@ mod tests {
                     kind: Some(TypeKind::Array(Box::new(make_union(vec![
                         TypeKind::Boolean,
                         TypeKind::Number,
-                    ]))))
+                    ])))),
+                    comment: None,
                 }
             }
         );
@@ -824,6 +862,30 @@ mod tests {
     }
 
     #[test]
+    fn param_annotation_captures_comment() {
+        let annotation = parse_annotation("---@param id number this is userId").unwrap();
+        assert_eq!(annotation.usage, AnnotationUsage::Param);
+        assert_eq!(annotation.name.as_deref(), Some("id"));
+        assert_eq!(annotation.ty.raw, "number");
+        assert_eq!(annotation.ty.comment.as_deref(), Some("this is userId"));
+    }
+
+    #[test]
+    fn field_annotation_captures_comment_with_spacing() {
+        let (name, ty) =
+            parse_field_declaration("---   @field id string this is container id").unwrap();
+        assert_eq!(name, "id");
+        assert_eq!(ty.raw, "string");
+        assert_eq!(ty.comment.as_deref(), Some("this is container id"));
+    }
+
+    #[test]
+    fn class_declaration_allows_spaced_prefix() {
+        let decl = parse_class_declaration("---   @class Container").unwrap();
+        assert_eq!(decl.name, "Container");
+    }
+
+    #[test]
     fn from_ast_collects_annotations_with_padding() {
         let source = r#"
         ---@type number
@@ -854,6 +916,34 @@ mod tests {
             .field_annotation("Foo", "bar")
             .expect("field registered");
         assert_eq!(field.raw, "string");
+        assert!(field.comment.is_none());
+    }
+
+    #[test]
+    fn from_ast_allows_comments_between_class_and_fields() {
+        let source = r#"
+        --- @class Container
+
+        --- note about the class
+        -- another comment
+
+        ---@field id number
+        --- Extra info about id
+        ---@field info string detailed info
+        local Container = {}
+        "#;
+        let ast = parse(source.unindent().as_str()).expect("parse failure");
+        let (_, registry) = AnnotationIndex::from_ast(&ast, source);
+        let id_field = registry
+            .field_annotation("Container", "id")
+            .expect("id field registered");
+        assert_eq!(id_field.raw, "number");
+        assert!(id_field.comment.is_none());
+        let info_field = registry
+            .field_annotation("Container", "info")
+            .expect("info field registered");
+        assert_eq!(info_field.raw, "string");
+        assert_eq!(info_field.comment.as_deref(), Some("detailed info"));
     }
 
     #[test]

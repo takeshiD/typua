@@ -420,11 +420,20 @@ impl TypeRegistry {
 pub struct AnnotatedType {
     pub raw: String,
     pub kind: Option<TypeKind>,
+    pub comment: Option<String>,
 }
 
 impl AnnotatedType {
     pub fn new(raw: String, kind: Option<TypeKind>) -> Self {
-        Self { raw, kind }
+        Self {
+            raw,
+            kind,
+            comment: None,
+        }
+    }
+
+    pub fn with_comment(raw: String, kind: Option<TypeKind>, comment: Option<String>) -> Self {
+        Self { raw, kind, comment }
     }
 }
 

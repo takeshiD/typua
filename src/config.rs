@@ -73,22 +73,12 @@ pub enum RuntimeVersion {
     Luajit,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Default)]
 #[serde(default)]
 pub struct WorkspaceConfig {
     pub library: Vec<String>,
     pub ignore_dir: Vec<String>,
     pub use_gitignore: bool,
-}
-
-impl Default for WorkspaceConfig {
-    fn default() -> Self {
-        Self {
-            library: Vec::new(),
-            ignore_dir: vec![".vscode".to_string()],
-            use_gitignore: false,
-        }
-    }
 }
 
 #[cfg(test)]
