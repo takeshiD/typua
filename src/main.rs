@@ -43,7 +43,7 @@ fn handle_check(options: CheckOptions) -> Result<()> {
 fn handle_lsp(options: LspOptions) -> Result<()> {
     let xdg_dir = xdg::BaseDirectories::with_prefix("typua");
     let log_path = xdg_dir
-        .place_cache_file("log.json")
+        .place_cache_file("log.jsonl")
         .expect("failed to create log dir");
     let log_file = if !log_path.exists() {
         Arc::new(File::create(log_path).expect("failed to create log file"))

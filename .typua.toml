@@ -9,5 +9,4 @@ path_strict = false
 [workspace]
 ignore_dir = [
     "target",
-    ".vscode"
 ]
