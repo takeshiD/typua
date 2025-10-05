@@ -1,0 +1,3 @@
+---@class Tree
+---@field top Tree
+---@field last Tree

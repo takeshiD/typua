@@ -3,7 +3,7 @@ use std::path::Path;
 use full_moon::parse;
 use typua::diagnostics::DiagnosticCode;
 use typua::typechecker::{
-    TypeRegistry, check_ast, check_ast_with_registry, types::AnnotationIndex,
+    TypeRegistry, check_ast_no_registry, check_ast_with_registry, types::AnnotationIndex,
 };
 use unindent::unindent;
 
@@ -21,7 +21,7 @@ fn local_assignment_type_mismatch_reports_diagnostic() {
     );
 
     let ast = parse_source(&source);
-    let result = check_ast(Path::new("single.lua"), &source, &ast);
+    let result = check_ast_no_registry(Path::new("single.lua"), &source, &ast);
     assert_eq!(result.diagnostics.len(), 1);
     let diagnostic = &result.diagnostics[0];
     assert!(
@@ -119,7 +119,7 @@ fn workspace_registry_allows_cross_file_class_usage() {
 fn multi_return_function_respects_annotations() {
     let source = include_str!("scripts/multi-return-ok.lua");
     let ast = parse_source(source);
-    let result = check_ast(Path::new("multi-return-ok.lua"), source, &ast);
+    let result = check_ast_no_registry(Path::new("multi-return-ok.lua"), source, &ast);
     assert!(
         result.diagnostics.is_empty(),
         "unexpected diagnostics: {:?}",
@@ -131,7 +131,7 @@ fn multi_return_function_respects_annotations() {
 fn multi_return_missing_value_reports_diagnostic() {
     let source = include_str!("scripts/multi-return-missing.lua");
     let ast = parse_source(source);
-    let result = check_ast(Path::new("multi-return-missing.lua"), source, &ast);
+    let result = check_ast_no_registry(Path::new("multi-return-missing.lua"), source, &ast);
 
     assert_eq!(result.diagnostics.len(), 1);
     let diagnostic = &result.diagnostics[0];
@@ -149,7 +149,7 @@ fn multi_return_missing_value_reports_diagnostic() {
 fn multi_return_extra_value_reports_diagnostic() {
     let source = include_str!("scripts/multi-return-extra.lua");
     let ast = parse_source(source);
-    let result = check_ast(Path::new("multi-return-extra.lua"), source, &ast);
+    let result = check_ast_no_registry(Path::new("multi-return-extra.lua"), source, &ast);
 
     assert_eq!(result.diagnostics.len(), 1);
     let diagnostic = &result.diagnostics[0];
@@ -167,7 +167,7 @@ fn multi_return_extra_value_reports_diagnostic() {
 fn multi_return_type_mismatch_reports_diagnostic() {
     let source = include_str!("scripts/multi-return-type-mismatch.lua");
     let ast = parse_source(source);
-    let result = check_ast(Path::new("multi-return-type-mismatch.lua"), source, &ast);
+    let result = check_ast_no_registry(Path::new("multi-return-type-mismatch.lua"), source, &ast);
 
     assert_eq!(result.diagnostics.len(), 1);
     let diagnostic = &result.diagnostics[0];
@@ -228,7 +228,7 @@ fn function_return_annotation_propagates_function_type() {
     );
 
     let ast = parse_source(&source);
-    let result = check_ast(Path::new("function-return.lua"), &source, &ast);
+    let result = check_ast_no_registry(Path::new("function-return.lua"), &source, &ast);
 
     assert!(
         result.diagnostics.is_empty(),
@@ -268,7 +268,7 @@ fn class_field_function_annotation_sets_function_type() {
     );
 
     let ast = parse_source(&source);
-    let result = check_ast(Path::new("const-generator.lua"), &source, &ast);
+    let result = check_ast_no_registry(Path::new("const-generator.lua"), &source, &ast);
 
     assert!(
         result.diagnostics.is_empty(),
@@ -329,7 +329,7 @@ fn generic_function_instantiates_types() {
     );
 
     let ast = parse_source(&source);
-    let result = check_ast(Path::new("function-generics.lua"), &source, &ast);
+    let result = check_ast_no_registry(Path::new("function-generics.lua"), &source, &ast);
 
     assert!(
         result.diagnostics.is_empty(),
@@ -365,7 +365,7 @@ fn class_generics_specialize_array() {
     );
 
     let ast = parse_source(&source);
-    let result = check_ast(Path::new("array-generics.lua"), &source, &ast);
+    let result = check_ast_no_registry(Path::new("array-generics.lua"), &source, &ast);
 
     assert!(
         result.diagnostics.is_empty(),

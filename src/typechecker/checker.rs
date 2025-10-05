@@ -101,10 +101,16 @@ fn error_range(error: &FullMoonError) -> Option<TextRange> {
     Some(TextRange { start, end })
 }
 
-pub fn check_ast(path: &Path, source: &str, ast: &ast::Ast) -> CheckResult {
+/// Entrypoint for typecheck only specified ast.
+///
+/// Return diagnostics and type-map about specified ast.
+pub fn check_ast_no_registry(path: &Path, source: &str, ast: &ast::Ast) -> CheckResult {
     check_ast_with_registry(path, source, ast, None)
 }
 
+/// Entrypoint for typecheck with Workspace and Library type-declaration
+///
+/// Return diagnostics and type-map about specified ast.
 pub fn check_ast_with_registry(
     path: &Path,
     source: &str,
@@ -166,6 +172,7 @@ impl<'a> TypeChecker<'a> {
         }
     }
 
+    /// Main typecheck process for TypedAST.
     fn check_program(mut self, program: &typed_ast::Program) -> CheckResult {
         self.scopes.push(HashMap::new());
         self.check_block(&program.block);
@@ -568,6 +575,12 @@ impl<'a> TypeChecker<'a> {
         }
     }
 
+    /// Type check 'if' statement
+    ///
+    /// # Algorithm
+    /// This method realizes flow-sensitive narrowing by branching type-environment.
+    /// 1. copy original envinronment when evaluate `if` statement
+    /// 2. if `if` statement condition is `true`
     fn check_if(&mut self, if_stmt: &typed_ast::IfStmt) {
         let base_scope = self.current_scope_snapshot();
         let mut branch_scopes: Vec<HashMap<String, VariableEntry>> = Vec::new();
@@ -1650,7 +1663,7 @@ mod tests {
 
     fn run_type_check(source: &str) -> CheckResult {
         let ast = full_moon::parse(source).expect("failed to parse test source");
-        check_ast(Path::new("test.lua"), source, &ast)
+        check_ast_no_registry(Path::new("test.lua"), source, &ast)
     }
     #[test]
     fn annotation_type() {

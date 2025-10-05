@@ -3,7 +3,7 @@ local b_ary = { true }
 
 local a = b_ary
 
----@type lsp.ConfigurationParams
+---@type vim.lsp.ConfigurationParams
 local z = {}
 z.items = {
     scopeUri = "hello",
@@ -14,8 +14,6 @@ z.items = {
 ---
 ---
 ---@field x number
-
-
 ---this is a user id
 ---(1) user id
 ---@field id number
