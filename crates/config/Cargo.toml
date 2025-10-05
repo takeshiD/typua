@@ -1,0 +1,10 @@
+[package]
+name = "typua-config"
+edition = "2024"
+version = { workspace = true}
+
+[lib]
+name = "typua_config"
+path = "src/lib.rs"
+
+[dependencies]

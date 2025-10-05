@@ -1,0 +1,8 @@
+[package]
+name = "typua-parser"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+full_moon = "2.0.0"
+typua-config = { workspace = true }

@@ -1,0 +1,10 @@
+[package]
+name = "typua-cli"
+edition = "2024"
+version = { workspace = true }
+
+[[bin]]
+name = "typua"
+path = "src/main.rs"
+
+[dependencies]
