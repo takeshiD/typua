@@ -326,9 +326,9 @@ Optional-Param:
   Γ, x : τ ∪ nil ⊢ function(x) ... end
 ```
 
-## 4. サブタイピング規則とUnion/Intersection型
+## 4. 部分型付け規則とUnion/Intersection型
 
-### サブタイピング基本規則
+### 部分型付け基本規則
 
 **反射律・推移律**：
 ```
@@ -338,7 +338,7 @@ Sub-Refl:                Sub-Trans:
                          S <: U
 ```
 
-**サブサンプション規則**：
+**包摂規則**：
 ```
 Subsumption:
   Γ ⊢ e : S    S <: T
@@ -356,7 +356,7 @@ Union-Intro-L:            Union-Intro-R:
   Γ ⊢ e : τ₁ ∪ τ₂          Γ ⊢ e : τ₁ ∪ τ₂
 ```
 
-**Union型サブタイピング**：
+**Union型部分型付け**：
 ```
 Union-Sub-L:              Union-Sub-R:
   S <: T₁    S <: T₂        T₁ <: S    T₂ <: S
