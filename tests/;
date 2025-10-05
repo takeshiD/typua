@@ -9,41 +9,7 @@ Compatibled type-annotation syntax [lua-language-server](https://github.com/lual
 - 🚀 Blazing Fast Typecheck
 - 💾 Low memory usage
 - 🖥️ Language Server Support
-- 🌕️ Lua5.1, 5.2, 5.3, 5.4 and LuaJIT Supported
-
-## Status
-- **Type declaration**
-    - [x] builtin-type(nil, number, string, boolean, function, table)
-    - [x] compound-type(union, array, tuple, dictionary, key-value table)
-    - [x] class
-    - [x] enum
-    - [ ] alias
-    - [ ] cast
-    - [ ] type coercion(as)
-    - [x] generic function
-    - [ ] generic class and method
-- **Type check**
-    - [x] assign-type-mismatch
-    - [x] return-type-mismatch
-    - [x] param-type-mismatch
-    - [x] field-type-mismatch
-    - [ ] table-shape-mismatch
-- **Suppert Lua Version**
-    - [x] Lua51
-    - [ ] Lua52
-    - [ ] Lua53
-    - [ ] Lua54
-    - [ ] LuaJIT
-- **performance**
-    - Reducing check time
-        - [x] Full Analysis of changed file
-        - [ ] Incremental Analysis of only the changed parts
-- **LSP Support**
-    - [x] Diagnostics
-    - [x] Inlay hints
-    - [ ] Hover
-    - [ ] References
-    - [ ] Goto Type Defenition
+ 
 
 # Install
 
@@ -114,4 +80,3 @@ on the other hand, use `--config/-c` option like `typua --config your_typua.toml
 ignore_dir = ["target"]
 use_gitignore = true
 ```
-

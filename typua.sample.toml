@@ -1,0 +1,6 @@
+[runtime]
+path = ["*.lua", "*/init.lua"]
+
+[workspace]
+ignore_dir = ["target"]
+use_gitignore = true
