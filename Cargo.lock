@@ -192,16 +192,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "typua-binder"
+version = "0.1.0"
+
+[[package]]
 name = "typua-cli"
 version = "0.1.3"
 
 [[package]]
 name = "typua-config"
 version = "0.1.3"
-
-[[package]]
-name = "typua-core"
-version = "0.1.0"
 
 [[package]]
 name = "typua-lsp"
@@ -219,7 +219,11 @@ dependencies = [
 ]
 
 [[package]]
-name = "typua-workspace"
+name = "typua-typecheck"
+version = "0.1.0"
+
+[[package]]
+name = "typua-vfs"
 version = "0.1.0"
 
 [[package]]

@@ -14,7 +14,7 @@ version = "0.1.3"
 # internal dependencies
 typua-core = { path = "crates/core" }
 typua-config = { path = "crates/config" }
-typua-workspace = { path = "crates/workspace" }
+typua-vfs = { path = "crates/vfs" }
 typua-parser = { path = "crates/parser" }
 
 # external dependencies
