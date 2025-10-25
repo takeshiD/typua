@@ -214,6 +214,7 @@ dependencies = [
 name = "typua-parser"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "full_moon",
  "typua-config",
 ]

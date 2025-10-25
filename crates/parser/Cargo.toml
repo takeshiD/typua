@@ -5,4 +5,5 @@ edition = "2024"
 
 [dependencies]
 full_moon = "2.0.0"
+anyhow = { workspace = true }
 typua-config = { workspace = true }
