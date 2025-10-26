@@ -1,7 +1,5 @@
 use std::collections::BTreeMap;
 
-use im::Vector;
-
 use crate::annotation::{AnnotationTag, concat_tokens, parse_annotation};
 use crate::span::Span;
 use crate::types::TypeKind;
@@ -13,7 +11,7 @@ pub struct TypeAst {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Block {
-    pub stmts: Vector<Stmt>,
+    pub stmts: Vec<Stmt>,
 }
 
 /// Statements
@@ -43,8 +41,8 @@ pub struct Assign {}
 /// ids are x, y["a"], z[1]
 /// exprs are 1, "hello", nil
 pub struct LocalAssign {
-    vars: Vec<Variable>,
-    exprs: Vec<Expression>,
+    pub vars: Vec<Variable>,
+    pub exprs: Vec<Expression>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -146,23 +144,29 @@ pub struct LuaBoolean {
     span: Span,
 }
 
-#[derive(Debug, Clone, PartialEq)]
-pub struct Variable {
-    name: String,
-    annotated_type: TypeKind,
+impl From<full_moon::ast::Ast> for TypeAst {
+    fn from(ast: full_moon::ast::Ast) -> Self {
+        Self {
+            block: Block::from(ast.nodes().clone()),
+        }
+    }
 }
 
-// impl From<full_moon::ast::Block> for Block {
-//     fn from(block: full_moon::ast::Block) -> Self {
-//         let mut stmts = Vector::new();
-//         for stmt in block.stmts() {
-//             stmts.push_back(Stmt::from(stmt));
-//         }
-//         Self {
-//             block: Block { stmts },
-//         }
-//     }
-// }
+#[derive(Debug, Clone, PartialEq)]
+pub struct Variable {
+    pub name: String,
+    pub annotated_type: TypeKind,
+}
+
+impl From<full_moon::ast::Block> for Block {
+    fn from(block: full_moon::ast::Block) -> Self {
+        let mut stmts = Vec::new();
+        for stmt in block.stmts() {
+            stmts.push(Stmt::from(stmt.clone()));
+        }
+        Self { stmts }
+    }
+}
 
 impl From<full_moon::ast::Stmt> for Stmt {
     fn from(stmt: full_moon::ast::Stmt) -> Self {
