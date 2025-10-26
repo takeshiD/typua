@@ -18,5 +18,11 @@ typua-vfs = { path = "crates/vfs" }
 typua-parser = { path = "crates/parser" }
 
 # external dependencies
-anyhow = "1.0"
-thiserror = "2.0"
+## for release
+anyhow = "1"
+thiserror = "2"
+im = "15"
+
+## for development
+unindent = "0.2"
+pretty_assertions = "1.4"

@@ -8,7 +8,7 @@ pub fn parse(code: &str, lua_version: LuaVersion) -> Result<TypeAst> {
     match lua_version {
         LuaVersion::Lua51 => {
             let _ = full_moon::parse_fallible(code, full_moon::LuaVersion::lua51());
-            anyhow::bail!("hello")
+            anyhow::bail!("")
         }
     }
 }

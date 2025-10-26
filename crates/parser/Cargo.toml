@@ -7,3 +7,8 @@ edition = "2024"
 full_moon = "2.0.0"
 anyhow = { workspace = true }
 typua-config = { workspace = true }
+im = { workspace = true }
+
+[dev-dependencies]
+unindent = { workspace = true }
+pretty_assertions = { workspace = true }
