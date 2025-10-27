@@ -7,4 +7,6 @@ pub enum TypuaError {
     SyntaxFalied {
         source: full_moon::Error,
     },
+    #[error("annotation syntax error")]
+    AnnotationSyntaxError {},
 }

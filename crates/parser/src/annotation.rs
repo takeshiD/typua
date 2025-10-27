@@ -1,8 +1,7 @@
 use crate::span::Position;
+use crate::span::Span;
 use crate::types::TypeKind;
-use crate::{error::TypuaError, span::Span};
 
-use full_moon::tokenizer::Token;
 use nom::sequence::terminated;
 use nom::{
     IResult, Parser,
@@ -41,30 +40,21 @@ pub fn concat_tokens<'a>(tokens: impl Iterator<Item = &'a full_moon::tokenizer::
 /// entry point for annotation parsing
 pub fn parse_annotation(content: String) -> Vec<AnnotationInfo> {
     let span = AnnotationSpan::new(&content);
-    if let Ok((_, tys)) = parse_type_annotation(span) {
-        tys.iter()
-            .map(|ty| AnnotationInfo {
-                tag: AnnotationTag::Type(ty.clone()),
-                span: Span {
-                    start: Position::new(0, 0),
-                    end: Position::new(0, 0),
-                },
-            })
-            .collect()
-    } else {
-        Vec::new()
+    match parse_type_annotation(span) {
+        Ok((_, infos)) => infos,
+        Err(_) => Vec::new(),
     }
 }
 
 /// parsing type annotation
-fn parse_type_annotation(i: AnnotationSpan) -> IResult<AnnotationSpan, Vec<TypeKind>> {
+fn parse_type_annotation(i: AnnotationSpan) -> IResult<AnnotationSpan, Vec<AnnotationInfo>> {
     let (i, _) = tag("---@type").parse(i)?;
     let (i, _) = multispace1.parse(i)?;
     separated_list1(ws(tag(",")), parse_type).parse(i)
 }
 
 /// parsing basictype number, string, boolean, any, nil
-fn parse_type(i: AnnotationSpan) -> IResult<AnnotationSpan, TypeKind> {
+fn parse_type(i: AnnotationSpan) -> IResult<AnnotationSpan, AnnotationInfo> {
     alt((
         parse_dict,
         parse_tabletype,
@@ -76,73 +66,170 @@ fn parse_type(i: AnnotationSpan) -> IResult<AnnotationSpan, TypeKind> {
     .parse(i)
 }
 
-fn parse_basictype(i: AnnotationSpan) -> IResult<AnnotationSpan, TypeKind> {
-    alt((
+fn parse_basictype(start_span: AnnotationSpan) -> IResult<AnnotationSpan, AnnotationInfo> {
+    let (end_span, ty) = alt((
         map(ws(tag("number")), |_| TypeKind::Number),
         map(ws(tag("boolean")), |_| TypeKind::Boolean),
         map(ws(tag("string")), |_| TypeKind::String),
         map(ws(tag("nil")), |_| TypeKind::Nil),
         map(ws(tag("any")), |_| TypeKind::Any),
     ))
-    .parse(i)
+    .parse(start_span)?;
+    let satrt_position = Position::new(start_span.location_line(), start_span.get_column() as u32);
+    let end_position = Position::new(end_span.location_line(), end_span.get_column() as u32);
+    Ok((
+        end_span,
+        AnnotationInfo {
+            tag: AnnotationTag::Type(ty),
+            span: Span {
+                start: satrt_position,
+                end: end_position,
+            },
+        },
+    ))
 }
 
-fn parse_optional(i: AnnotationSpan) -> IResult<AnnotationSpan, TypeKind> {
-    let (i, ty) = terminated(parse_basictype, tag("?")).parse(i)?;
-    Ok((i, TypeKind::Union(vec![ty, TypeKind::Nil])))
+fn parse_optional(start_span: AnnotationSpan) -> IResult<AnnotationSpan, AnnotationInfo> {
+    let (end_span, ty) = map(terminated(parse_basictype, tag("?")), |a| match a.tag {
+        AnnotationTag::Type(ty) => ty,
+        _ => unimplemented!(),
+    })
+    .parse(start_span)?;
+    let satrt_position = Position::new(start_span.location_line(), start_span.get_column() as u32);
+    let end_position = Position::new(end_span.location_line(), end_span.get_column() as u32);
+    Ok((
+        end_span,
+        AnnotationInfo {
+            tag: AnnotationTag::Type(TypeKind::Union(vec![ty, TypeKind::Nil])),
+            span: Span {
+                start: satrt_position,
+                end: end_position,
+            },
+        },
+    ))
 }
 
-fn parse_union(i: AnnotationSpan) -> IResult<AnnotationSpan, TypeKind> {
-    let (i, tys) = separated_list1(ws(tag("|")), parse_basictype).parse(i)?;
+fn parse_union(start_span: AnnotationSpan) -> IResult<AnnotationSpan, AnnotationInfo> {
+    let (end_span, tys) = map(
+        separated_list1(ws(tag("|")), parse_basictype),
+        |ann_infos| {
+            ann_infos
+                .iter()
+                .map(|ann| match ann.tag.clone() {
+                    AnnotationTag::Type(ty) => ty,
+                    _ => unimplemented!(),
+                })
+                .collect::<Vec<TypeKind>>()
+        },
+    )
+    .parse(start_span)?;
+    let satrt_position = Position::new(start_span.location_line(), start_span.get_column() as u32);
+    let end_position = Position::new(end_span.location_line(), end_span.get_column() as u32);
     if tys.len() >= 2 {
-        Ok((i, TypeKind::Union(tys)))
+        Ok((
+            end_span,
+            AnnotationInfo {
+                tag: AnnotationTag::Type(TypeKind::Union(tys)),
+                span: Span {
+                    start: satrt_position,
+                    end: end_position,
+                },
+            },
+        ))
     } else {
         Err(nom::Err::Error(nom::error::Error::new(
-            i,
+            start_span,
             nom::error::ErrorKind::SeparatedList,
         )))
     }
 }
 
-fn parse_array(i: AnnotationSpan) -> IResult<AnnotationSpan, TypeKind> {
-    let (i, ty) = terminated(parse_basictype, tag("[]")).parse(i)?;
-    Ok((i, TypeKind::Array(Box::new(ty))))
-}
-
-fn parse_tabletype(i: AnnotationSpan) -> IResult<AnnotationSpan, TypeKind> {
-    let (i, _) = tag("table").parse(i)?;
-    let (i, (key_ty, val_ty)) = delimited(
-        char('<'),
-        separated_pair(parse_basictype, ws(char(',')), parse_basictype),
-        char('>'),
-    )
-    .parse(i)?;
+fn parse_array(start_span: AnnotationSpan) -> IResult<AnnotationSpan, AnnotationInfo> {
+    let (end_span, ty) = map(terminated(parse_basictype, tag("[]")), |ann| {
+        match ann.tag {
+            AnnotationTag::Type(ty) => ty,
+            _ => unimplemented!(),
+        }
+    })
+    .parse(start_span)?;
+    let satrt_position = Position::new(start_span.location_line(), start_span.get_column() as u32);
+    let end_position = Position::new(end_span.location_line(), end_span.get_column() as u32);
     Ok((
-        i,
-        TypeKind::KVTable {
-            key: Box::new(key_ty),
-            val: Box::new(val_ty),
+        end_span,
+        AnnotationInfo {
+            tag: AnnotationTag::Type(TypeKind::Array(Box::new(ty))),
+            span: Span {
+                start: satrt_position,
+                end: end_position,
+            },
         },
     ))
 }
 
-fn parse_dict(i: AnnotationSpan) -> IResult<AnnotationSpan, TypeKind> {
-    let (i, (key_ty, val_ty)) = delimited(
-        ws(char('{')),
-        separated_pair(
-            delimited(char('['), parse_basictype, char(']')),
-            ws(char(':')),
-            parse_basictype,
+fn parse_tabletype(start_span: AnnotationSpan) -> IResult<AnnotationSpan, AnnotationInfo> {
+    let (end_span, _) = tag("table").parse(start_span)?;
+    let (end_span, (key_ty, val_ty)) = map(
+        delimited(
+            char('<'),
+            separated_pair(parse_basictype, ws(char(',')), parse_basictype),
+            char('>'),
         ),
-        ws(char('}')),
-    )
-    .parse(i)?;
-    Ok((
-        i,
-        TypeKind::Dict {
-            key: Box::new(key_ty),
-            val: Box::new(val_ty),
+        |(key, val)| match (key.tag, val.tag) {
+            (AnnotationTag::Type(key_ty), AnnotationTag::Type(val_ty)) => (key_ty, val_ty),
+            (_, _) => unimplemented!(),
         },
+    )
+    .parse(end_span)?;
+    let satrt_position = Position::new(start_span.location_line(), start_span.get_column() as u32);
+    let end_position = Position::new(end_span.location_line(), end_span.get_column() as u32);
+    Ok((
+        end_span,
+        AnnotationInfo {
+            tag: AnnotationTag::Type(TypeKind::KVTable {
+                key: Box::new(key_ty),
+                val: Box::new(val_ty),
+            }),
+            span: Span {
+                start: satrt_position,
+                end: end_position,
+            },
+        },
+    ))
+}
+
+fn parse_dict(start_span: AnnotationSpan) -> IResult<AnnotationSpan, AnnotationInfo> {
+    let (end_span, (key_ty, val_ty)) = map(
+        delimited(
+            ws(char('{')),
+            separated_pair(
+                delimited(char('['), parse_basictype, char(']')),
+                ws(char(':')),
+                parse_basictype,
+            ),
+            ws(char('}')),
+        ),
+        |(key, val)| match (key.tag, val.tag) {
+            (AnnotationTag::Type(key_ty), AnnotationTag::Type(val_ty)) => (key_ty, val_ty),
+            (_, _) => unimplemented!(),
+        },
+    )
+    .parse(start_span)?;
+    let satrt_position = Position::new(start_span.location_line(), start_span.get_column() as u32);
+    let end_position = Position::new(end_span.location_line(), end_span.get_column() as u32);
+    Ok((
+        end_span,
+        AnnotationInfo {
+            tag: AnnotationTag::Type(
+                TypeKind::Dict {
+                    key: Box::new(key_ty),
+                    val: Box::new(val_ty),
+                },
+            ),
+            span: Span {
+                start: satrt_position,
+                end: end_position,
+            }
+        }
     ))
 }
 
@@ -348,11 +435,11 @@ mod parse_annotation_normal {
 }
 
 #[cfg(test)]
-mod parse_type_annotation_normal {
+mod parse_type_annotation {
     use super::*;
     use pretty_assertions::assert_eq;
     #[test]
-    fn basictype() {
+    fn basictype_normal() {
         // sigle type
         let content = AnnotationSpan::new("---@type number");
         let result = parse_type_annotation(content);
@@ -409,5 +496,28 @@ mod parse_type_annotation_normal {
                 val: Box::new(TypeKind::Boolean)
             }]
         );
+    }
+    #[test]
+    fn basictype_abnormal() {
+        // no space
+        let content = AnnotationSpan::new("---@typenumber");
+        let result = parse_type_annotation(content);
+        assert_eq!(result.is_err(), true);
+        // no comma
+        let content = AnnotationSpan::new("---@type number  string");
+        let result = parse_type_annotation(content);
+        assert_eq!(result.is_err(), true);
+        // missing right bracket
+        let content = AnnotationSpan::new("---@type number[");
+        let result = parse_type_annotation(content);
+        assert_eq!(result.is_err(), true);
+        // table missing comma
+        let content = AnnotationSpan::new("---@type table<string number>");
+        let result = parse_type_annotation(content);
+        assert_eq!(result.is_err(), true);
+        // dict missing left bracket
+        let content = AnnotationSpan::new("---@type {string]: boolean}");
+        let result = parse_type_annotation(content);
+        assert_eq!(result.is_err(), true);
     }
 }

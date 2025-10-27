@@ -1,3 +1,5 @@
+use nom_locate::LocatedSpan;
+
 #[derive(Debug, Clone, PartialEq, PartialOrd)]
 pub struct Span {
     pub start: Position,
