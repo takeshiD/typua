@@ -17,10 +17,10 @@ pub enum TypeKind {
     Array(Box<TypeKind>),
     Dict {
         key: Box<TypeKind>,
-        value: Box<TypeKind>,
+        val: Box<TypeKind>,
     },
     KVTable {
         key: Box<TypeKind>,
-        value: Box<TypeKind>,
+        val: Box<TypeKind>,
     },
 }

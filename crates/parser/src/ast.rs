@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 
-use crate::annotation::{AnnotationTag, concat_tokens, parse_annotation};
-use crate::span::Span;
+use crate::annotation::{AnnotationInfo, concat_tokens, parse_annotation};
+use crate::span::{Position, Span};
 use crate::types::TypeKind;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -43,6 +43,7 @@ pub struct Assign {}
 pub struct LocalAssign {
     pub vars: Vec<Variable>,
     pub exprs: Vec<Expression>,
+    pub annotates: Vec<AnnotationInfo>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -128,13 +129,11 @@ pub enum UnOp {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct LuaNumber {
-    val: f32,
-    span: Span,
+    pub span: Span,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct LuaString {
-    val: String,
     span: Span,
 }
 
@@ -155,7 +154,7 @@ impl From<full_moon::ast::Ast> for TypeAst {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Variable {
     pub name: String,
-    pub annotated_type: TypeKind,
+    pub span: Span,
 }
 
 impl From<full_moon::ast::Block> for Block {
@@ -175,20 +174,16 @@ impl From<full_moon::ast::Stmt> for Stmt {
             full_moon::ast::Stmt::LocalAssignment(local_assign) => {
                 let leading_tribia = local_assign.local_token().leading_trivia();
                 let ann_content = concat_tokens(leading_tribia);
-                let annotated_type = if let Some(ann_info) = parse_annotation(ann_content) {
-                    match ann_info.tag {
-                        AnnotationTag::Type(ty) => ty,
-                        _ => TypeKind::Any,
-                    }
-                } else {
-                    TypeKind::Any
-                };
+                let annotates = parse_annotation(ann_content);
                 let vars: Vec<Variable> = local_assign
                     .names()
                     .iter()
                     .map(|t| Variable {
                         name: t.token().to_string(),
-                        annotated_type: annotated_type.clone(),
+                        span: Span {
+                            start: Position::from(t.start_position()),
+                            end: Position::from(t.end_position()),
+                        },
                     })
                     .collect();
                 let exprs: Vec<Expression> = local_assign
@@ -196,7 +191,11 @@ impl From<full_moon::ast::Stmt> for Stmt {
                     .iter()
                     .map(|e| Expression::from(e.clone()))
                     .collect();
-                Stmt::LocalAssign(LocalAssign { vars, exprs })
+                Stmt::LocalAssign(LocalAssign {
+                    vars,
+                    exprs,
+                    annotates,
+                })
             }
             // full_moon::ast::Stmt::FunctionDeclaration(func_dec) => unimplemented!(),
             // full_moon::ast::Stmt::LocalFunction(local_func) => unimplemented!(),

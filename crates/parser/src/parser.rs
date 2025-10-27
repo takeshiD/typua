@@ -1,4 +1,3 @@
-use anyhow::Result;
 use typua_config::LuaVersion;
 
 use crate::ast::TypeAst;
@@ -24,9 +23,8 @@ pub fn parse(code: &str, lua_version: LuaVersion) -> (TypeAst, Vec<TypuaError>) 
 #[cfg(test)]
 mod convert_from_fullmoon {
     use super::*;
-    use crate::ast::{Expression, LocalAssign, Stmt, Variable, LuaNumber};
-    use crate::types::TypeKind;
-    use crate::span::{Span, Position};
+    use crate::ast::{Expression, LocalAssign, LuaNumber, Stmt, Variable};
+    use crate::span::{Position, Span};
     use pretty_assertions::assert_eq;
     use unindent::unindent;
     #[test]
@@ -36,23 +34,25 @@ mod convert_from_fullmoon {
         local x = 12
         "#,
         );
-        let (ast, errors) = parse(code.as_str(), LuaVersion::Lua51);
+        let (ast, _) = parse(code.as_str(), LuaVersion::Lua51);
         assert_eq!(
             ast.block.stmts,
             vec![Stmt::LocalAssign(LocalAssign {
                 vars: vec![Variable {
                     name: "x".to_string(),
-                    annotated_type: TypeKind::Any,
-                }],
-                exprs: vec![Expression::Number(LuaNumber{
-                    val: 12,
                     span: Span {
-                        start: Position {line: 1u32, character: u}
+                        start: Position::new(1, 7),
+                        end: Position::new(1, 7),
                     }
-                })]
+                }],
+                exprs: vec![Expression::Number(LuaNumber {
+                    span: Span {
+                        start: Position::new(1, 11),
+                        end: Position::new(1, 12),
+                    }
+                })],
+                annotates: Vec::new(),
             })]
         );
-
-        // assert_eq!()
     }
 }
