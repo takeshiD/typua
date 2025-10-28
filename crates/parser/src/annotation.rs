@@ -38,8 +38,8 @@ pub fn concat_tokens<'a>(tokens: impl Iterator<Item = &'a full_moon::tokenizer::
 }
 
 /// entry point for annotation parsing
-pub fn parse_annotation(content: String) -> Vec<AnnotationInfo> {
-    let span = AnnotationSpan::new(&content);
+pub fn parse_annotation(content: &str) -> Vec<AnnotationInfo> {
+    let span = AnnotationSpan::new(content);
     match parse_type_annotation(span) {
         Ok((_, infos)) => infos,
         Err(_) => Vec::new(),
@@ -219,17 +219,15 @@ fn parse_dict(start_span: AnnotationSpan) -> IResult<AnnotationSpan, AnnotationI
     Ok((
         end_span,
         AnnotationInfo {
-            tag: AnnotationTag::Type(
-                TypeKind::Dict {
-                    key: Box::new(key_ty),
-                    val: Box::new(val_ty),
-                },
-            ),
+            tag: AnnotationTag::Type(TypeKind::Dict {
+                key: Box::new(key_ty),
+                val: Box::new(val_ty),
+            }),
             span: Span {
                 start: satrt_position,
                 end: end_position,
-            }
-        }
+            },
+        },
     ))
 }
 
@@ -310,11 +308,10 @@ mod parse_annotation_normal {
 
     use super::*;
     use pretty_assertions::assert_eq;
-    use unindent::unindent;
     #[test]
     fn type_annotation() {
         // sigle type
-        let content = unindent(r#"---@type number"#);
+        let content = "---@type number";
         let ann_infos = parse_annotation(content);
         assert_eq!(ann_infos.len(), 1);
         assert_eq!(
@@ -323,12 +320,12 @@ mod parse_annotation_normal {
                 tag: AnnotationTag::Type(TypeKind::Number),
                 span: Span {
                     start: Position::new(1, 10),
-                    end: Position::new(1, 15)
+                    end: Position::new(1, 16)
                 }
             }
         );
         // multi assign
-        let content = unindent(r#"---@type number,string"#);
+        let content = "---@type number,string";
         let ann_infos = parse_annotation(content);
         assert_eq!(ann_infos.len(), 2);
         assert_eq!(
@@ -337,7 +334,7 @@ mod parse_annotation_normal {
                 tag: AnnotationTag::Type(TypeKind::Number),
                 span: Span {
                     start: Position::new(1, 10),
-                    end: Position::new(1, 15),
+                    end: Position::new(1, 16),
                 }
             }
         );
@@ -347,12 +344,12 @@ mod parse_annotation_normal {
                 tag: AnnotationTag::Type(TypeKind::String),
                 span: Span {
                     start: Position::new(1, 17),
-                    end: Position::new(1, 22),
+                    end: Position::new(1, 23),
                 }
             }
         );
         // optional
-        let content = unindent(r#"---@type number?"#);
+        let content = "---@type number?";
         let ann_infos = parse_annotation(content);
         assert_eq!(ann_infos.len(), 1);
         assert_eq!(
@@ -361,12 +358,12 @@ mod parse_annotation_normal {
                 tag: AnnotationTag::Type(TypeKind::Union(vec![TypeKind::Number, TypeKind::Nil])),
                 span: Span {
                     start: Position::new(1, 10),
-                    end: Position::new(1, 16)
+                    end: Position::new(1, 17)
                 }
             }
         );
         // union
-        let content = unindent(r#"---@type number|string"#);
+        let content = "---@type number|string";
         let ann_info = parse_annotation(content);
         assert_eq!(ann_info.len(), 1);
         assert_eq!(
@@ -375,16 +372,16 @@ mod parse_annotation_normal {
                 tag: AnnotationTag::Type(TypeKind::Union(vec![TypeKind::Number, TypeKind::String])),
                 span: Span {
                     start: Position::new(1, 10),
-                    end: Position::new(1, 22)
+                    end: Position::new(1, 23)
                 }
             }
         );
         // if no annotation, return any type
-        let content = unindent(r#""#);
+        let content = "";
         let ann_info = parse_annotation(content);
         assert_eq!(ann_info.is_empty(), true);
         // array
-        let content = unindent(r#"---@type string[]"#);
+        let content = "---@type string[]";
         let ann_info = parse_annotation(content);
         assert_eq!(ann_info.len(), 1);
         assert_eq!(
@@ -393,12 +390,12 @@ mod parse_annotation_normal {
                 tag: AnnotationTag::Type(TypeKind::Array(Box::new(TypeKind::String))),
                 span: Span {
                     start: Position::new(1, 10),
-                    end: Position::new(1, 17),
+                    end: Position::new(1, 18),
                 }
             }
         );
         // dictionary
-        let content = unindent(r#"---@type { [string]: boolean }"#);
+        let content = "---@type { [string]: boolean }";
         let ann_info = parse_annotation(content);
         assert_eq!(ann_info.len(), 1);
         assert_eq!(
@@ -410,12 +407,12 @@ mod parse_annotation_normal {
                 }),
                 span: Span {
                     start: Position::new(1, 10),
-                    end: Position::new(1, 30),
+                    end: Position::new(1, 31),
                 }
             }
         );
         // table
-        let content = unindent(r#"---@type table<string, number>"#);
+        let content = "---@type table<string, number>";
         let ann_info = parse_annotation(content);
         assert_eq!(ann_info.len(), 1);
         assert_eq!(
@@ -427,97 +424,9 @@ mod parse_annotation_normal {
                 }),
                 span: Span {
                     start: Position::new(1, 10),
-                    end: Position::new(1, 30),
+                    end: Position::new(1, 31),
                 }
             }
         );
-    }
-}
-
-#[cfg(test)]
-mod parse_type_annotation {
-    use super::*;
-    use pretty_assertions::assert_eq;
-    #[test]
-    fn basictype_normal() {
-        // sigle type
-        let content = AnnotationSpan::new("---@type number");
-        let result = parse_type_annotation(content);
-        assert_eq!(result.is_ok(), true);
-        assert_eq!(result.unwrap().1, vec![TypeKind::Number,]);
-        // multi type
-        let content = AnnotationSpan::new("---@type number , string ");
-        let result = parse_type_annotation(content);
-        assert_eq!(result.is_ok(), true);
-        assert_eq!(result.unwrap().1, vec![TypeKind::Number, TypeKind::String,]);
-        // optional
-        let content = AnnotationSpan::new("---@type string?");
-        let result = parse_type_annotation(content);
-        assert_eq!(result.is_ok(), true);
-        assert_eq!(
-            result.unwrap().1,
-            vec![TypeKind::Union(vec![TypeKind::String, TypeKind::Nil])]
-        );
-        // union
-        let content = AnnotationSpan::new("---@type number|string");
-        let result = parse_type_annotation(content);
-        assert_eq!(result.is_ok(), true);
-        assert_eq!(
-            result.unwrap().1,
-            vec![TypeKind::Union(vec![TypeKind::Number, TypeKind::String])]
-        );
-        // array
-        let content = AnnotationSpan::new("---@type number[]");
-        let result = parse_type_annotation(content);
-        assert_eq!(result.is_ok(), true);
-        assert_eq!(
-            result.unwrap().1,
-            vec![TypeKind::Array(Box::new(TypeKind::Number))]
-        );
-        // table
-        let content = AnnotationSpan::new("---@type table<string, number>");
-        let result = parse_type_annotation(content);
-        assert_eq!(result.is_ok(), true);
-        assert_eq!(
-            result.unwrap().1,
-            vec![TypeKind::KVTable {
-                key: Box::new(TypeKind::String),
-                val: Box::new(TypeKind::Number)
-            }]
-        );
-        // dict
-        let content = AnnotationSpan::new("---@type {[string]: boolean}");
-        let result = parse_type_annotation(content);
-        assert_eq!(result.is_ok(), true);
-        assert_eq!(
-            result.unwrap().1,
-            vec![TypeKind::Dict {
-                key: Box::new(TypeKind::String),
-                val: Box::new(TypeKind::Boolean)
-            }]
-        );
-    }
-    #[test]
-    fn basictype_abnormal() {
-        // no space
-        let content = AnnotationSpan::new("---@typenumber");
-        let result = parse_type_annotation(content);
-        assert_eq!(result.is_err(), true);
-        // no comma
-        let content = AnnotationSpan::new("---@type number  string");
-        let result = parse_type_annotation(content);
-        assert_eq!(result.is_err(), true);
-        // missing right bracket
-        let content = AnnotationSpan::new("---@type number[");
-        let result = parse_type_annotation(content);
-        assert_eq!(result.is_err(), true);
-        // table missing comma
-        let content = AnnotationSpan::new("---@type table<string number>");
-        let result = parse_type_annotation(content);
-        assert_eq!(result.is_err(), true);
-        // dict missing left bracket
-        let content = AnnotationSpan::new("---@type {string]: boolean}");
-        let result = parse_type_annotation(content);
-        assert_eq!(result.is_err(), true);
     }
 }

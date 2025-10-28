@@ -139,7 +139,6 @@ pub struct LuaString {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct LuaBoolean {
-    val: bool,
     span: Span,
 }
 
@@ -174,7 +173,7 @@ impl From<full_moon::ast::Stmt> for Stmt {
             full_moon::ast::Stmt::LocalAssignment(local_assign) => {
                 let leading_tribia = local_assign.local_token().leading_trivia();
                 let ann_content = concat_tokens(leading_tribia);
-                let annotates = parse_annotation(ann_content);
+                let annotates = parse_annotation(&ann_content);
                 let vars: Vec<Variable> = local_assign
                     .names()
                     .iter()
@@ -207,6 +206,30 @@ impl From<full_moon::ast::Stmt> for Stmt {
 impl From<full_moon::ast::Expression> for Expression {
     fn from(expr: full_moon::ast::Expression) -> Self {
         match expr {
+            full_moon::ast::Expression::Number(tkn) => Expression::Number(LuaNumber {
+                span: Span {
+                    start: Position::from(tkn.start_position()),
+                    end: Position::from(tkn.end_position()),
+                },
+            }),
+            full_moon::ast::Expression::String(tkn) => Expression::String(LuaString {
+                span: Span {
+                    start: Position::from(tkn.start_position()),
+                    end: Position::from(tkn.end_position()),
+                },
+            }),
+            full_moon::ast::Expression::Symbol(tkn) => match tkn.token_type() {
+                full_moon::tokenizer::TokenType::Symbol { symbol } => match symbol {
+                    full_moon::tokenizer::Symbol::False => Expression::Boolean(LuaBoolean {
+                        span: Span {
+                            start: Position::from(tkn.start_position()),
+                            end: Position::from(tkn.end_position()),
+                        },
+                    }),
+                    _ => unimplemented!(),
+                },
+                _ => unimplemented!(),
+            },
             full_moon::ast::Expression::BinaryOperator { lhs, binop, rhs } => {
                 Expression::BinaryOperator {
                     lhs: Box::new(Expression::from(*lhs)),
