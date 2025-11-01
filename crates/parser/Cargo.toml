@@ -3,6 +3,10 @@ name = "typua-parser"
 version = "0.1.0"
 edition = "2024"
 
+[lib]
+name = "typua_parser"
+path = "src/lib.rs"
+
 [dependencies]
 full_moon = "2.0.0"
 anyhow = { workspace = true }
