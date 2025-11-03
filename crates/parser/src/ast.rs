@@ -1,8 +1,8 @@
 use std::collections::BTreeMap;
 
 use crate::annotation::{AnnotationInfo, concat_tokens, parse_annotation};
-use crate::span::{Position, Span};
-use crate::types::TypeKind;
+use typua_span::{Position, Span};
+use typua_ty::TypeKind;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct TypeAst {
@@ -134,12 +134,12 @@ pub struct LuaNumber {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct LuaString {
-    span: Span,
+    pub span: Span,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct LuaBoolean {
-    span: Span,
+    pub span: Span,
 }
 
 impl From<full_moon::ast::Ast> for TypeAst {

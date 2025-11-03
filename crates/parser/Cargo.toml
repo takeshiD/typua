@@ -8,13 +8,21 @@ name = "typua_parser"
 path = "src/lib.rs"
 
 [dependencies]
-full_moon = "2.0.0"
-anyhow = { workspace = true }
-thiserror = { workspace = true }
-typua-config = { workspace = true }
-im = { workspace = true }
+# internal crates
+typua-config.workspace = true
+typua-ty.workspace = true
+typua-span.workspace = true
+
+# external crates
+## use only in parser
+# full_moon = "2.0.0"
 nom = "8.0.0"
 nom_locate = "5.0.0"
+## use in workspace
+anyhow.workspace = true
+thiserror.workspace = true
+im.workspace = true
+full_moon.workspace = true
 
 [dev-dependencies]
 unindent = { workspace = true }

@@ -1,6 +1,5 @@
-use crate::span::Position;
-use crate::span::Span;
-use crate::types::TypeKind;
+use typua_ty::TypeKind;
+use typua_span::{Position, Span};
 
 use nom::sequence::terminated;
 use nom::{
@@ -304,8 +303,6 @@ mod concat_tokens {
 
 #[cfg(test)]
 mod parse_annotation_normal {
-    use crate::span::Position;
-
     use super::*;
     use pretty_assertions::assert_eq;
     #[test]

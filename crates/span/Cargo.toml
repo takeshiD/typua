@@ -1,0 +1,15 @@
+[package]
+name = "typua-span"
+edition.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+authors.workspace = true
+license.workspace = true
+version.workspace = true
+
+[lib]
+name = "typua_span"
+path = "src/lib.rs"
+
+[dependencies]
+full_moon.workspace = true

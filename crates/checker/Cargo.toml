@@ -1,13 +1,12 @@
 [package]
-name = "typua-binder"
+name = "typua-checker"
 version = "0.1.0"
 edition = "2024"
 
-[lib]
-name = "typua_binder"
-path = "src/lib.rs"
-
 [dependencies]
 typua-parser.workspace = true
+typua-binder.workspace = true
 typua-ty.workspace = true
-im.workspace = true
+typua-span.workspace = true
+
+pretty_assertions.workspace = true

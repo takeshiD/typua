@@ -1,7 +1,7 @@
 use typua_config::LuaVersion;
+use typua_ty::{ParseError, TypuaError};
 
 use crate::ast::TypeAst;
-use crate::error::TypuaError;
 
 /// entry point for parsing lua script
 pub fn parse(code: &str, lua_version: LuaVersion) -> (TypeAst, Vec<TypuaError>) {
@@ -13,7 +13,7 @@ pub fn parse(code: &str, lua_version: LuaVersion) -> (TypeAst, Vec<TypuaError>) 
                 result
                     .errors()
                     .iter()
-                    .map(|e| TypuaError::SyntaxFalied { source: e.clone() })
+                    .map(|e| TypuaError::Parse(ParseError::SyntaxError(format!("{}", e))))
                     .collect(),
             )
         }
@@ -25,9 +25,9 @@ mod tests {
     use super::*;
     use crate::annotation::{AnnotationInfo, AnnotationTag};
     use crate::ast::{Expression, LocalAssign, LuaNumber, Stmt, Variable};
-    use crate::span::{Position, Span};
-    use crate::types::TypeKind;
     use pretty_assertions::assert_eq;
+    use typua_span::{Position, Span};
+    use typua_ty::TypeKind;
     use unindent::unindent;
     #[test]
     fn local_assign() {

@@ -1,5 +1,5 @@
-use typua_parser::{TypeAst, Stmt};
-use typua_parser::TypuaError;
+use typua_parser::ast::{Stmt, TypeAst};
+use typua_ty::TypuaError;
 
 use crate::flowgraph::FlowGraph;
 use crate::typeenv::TypeEnv;
@@ -19,10 +19,8 @@ impl Binder {
     fn bind(&mut self, ast: TypeAst) {
         for stmt in ast.block.stmts.iter() {
             match stmt {
-                Stmt::LocalAssign(local_assign) => {
-
-                }
-                _ => unimplemented!()
+                Stmt::LocalAssign(local_assign) => {}
+                _ => unimplemented!(),
             }
         }
     }
