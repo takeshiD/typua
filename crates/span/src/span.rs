@@ -4,6 +4,12 @@ pub struct Span {
     pub end: Position,
 }
 
+impl Span {
+    pub fn new(start: Position, end: Position) -> Self {
+        Self { start, end }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, PartialOrd)]
 pub struct Position {
     line: u32,
@@ -13,6 +19,24 @@ pub struct Position {
 impl Position {
     pub fn new(line: u32, character: u32) -> Self {
         Self { line, character }
+    }
+}
+
+impl From<full_moon::tokenizer::Token> for Span {
+    fn from(token: full_moon::tokenizer::Token) -> Self {
+        Self {
+            start: Position::from(token.start_position()),
+            end: Position::from(token.end_position()),
+        }
+    }
+}
+
+impl From<full_moon::tokenizer::TokenReference> for Span {
+    fn from(token_ref: full_moon::tokenizer::TokenReference) -> Self {
+        Self {
+            start: Position::from(token_ref.start_position()),
+            end: Position::from(token_ref.end_position()),
+        }
     }
 }
 

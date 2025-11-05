@@ -8,5 +8,6 @@ name = "typua_ty"
 path = "src/lib.rs"
 
 [dependencies]
+typua-span.workspace = true
 thiserror.workspace = true
 full_moon.workspace = true

@@ -24,7 +24,7 @@ pub fn parse(code: &str, lua_version: LuaVersion) -> (TypeAst, Vec<TypuaError>) 
 mod tests {
     use super::*;
     use crate::annotation::{AnnotationInfo, AnnotationTag};
-    use crate::ast::{Expression, LocalAssign, LuaNumber, Stmt, Variable};
+    use crate::ast::{Expression, LocalAssign, Stmt, Variable};
     use pretty_assertions::assert_eq;
     use typua_span::{Position, Span};
     use typua_ty::TypeKind;
@@ -47,12 +47,12 @@ mod tests {
                         end: Position::new(1, 8),
                     }
                 }],
-                exprs: vec![Expression::Number(LuaNumber {
+                exprs: vec![Expression::Number {
                     span: Span {
                         start: Position::new(1, 11),
                         end: Position::new(1, 13),
                     }
-                })],
+                }],
                 annotates: Vec::new(),
             })]
         );
@@ -73,12 +73,12 @@ mod tests {
                         end: Position::new(2, 8),
                     }
                 }],
-                exprs: vec![Expression::Number(LuaNumber {
+                exprs: vec![Expression::Number {
                     span: Span {
                         start: Position::new(2, 11),
                         end: Position::new(2, 13),
                     }
-                })],
+                }],
                 annotates: vec![AnnotationInfo {
                     tag: AnnotationTag::Type(TypeKind::Number),
                     span: Span {

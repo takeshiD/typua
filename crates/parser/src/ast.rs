@@ -82,9 +82,15 @@ pub struct Label {}
 /// Expression
 #[derive(Debug, Clone, PartialEq)]
 pub enum Expression {
-    Number(LuaNumber),
-    String(LuaString),
-    Boolean(LuaBoolean),
+    Number {
+        span: Span,
+    },
+    String {
+        span: Span,
+    },
+    Boolean {
+        span: Span,
+    },
     BinaryOperator {
         lhs: Box<Expression>,
         binop: BinOp,
@@ -104,19 +110,19 @@ pub enum Expression {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum BinOp {
-    Add,
-    Sub,
-    Mul,
-    Div,
-    And,
-    Or,
-    GreaterThan,
-    GreaterThanEqual,
-    LessThan,
-    LessThanEqual,
-    Equal,
-    NotEqual,
-    Concat,
+    Add(Span),
+    Sub(Span),
+    Mul(Span),
+    Div(Span),
+    And(Span),
+    Or(Span),
+    GreaterThan(Span),
+    GreaterThanEqual(Span),
+    LessThan(Span),
+    LessThanEqual(Span),
+    Equal(Span),
+    NotEqual(Span),
+    Concat(Span),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -127,20 +133,20 @@ pub enum UnOp {
     Tilde,
 }
 
-#[derive(Debug, Clone, PartialEq)]
-pub struct LuaNumber {
-    pub span: Span,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct LuaString {
-    pub span: Span,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct LuaBoolean {
-    pub span: Span,
-}
+// #[derive(Debug, Clone, PartialEq)]
+// pub struct LuaNumber {
+//     pub span: Span,
+// }
+//
+// #[derive(Debug, Clone, PartialEq)]
+// pub struct LuaString {
+//     pub span: Span,
+// }
+//
+// #[derive(Debug, Clone, PartialEq)]
+// pub struct LuaBoolean {
+//     pub span: Span,
+// }
 
 impl From<full_moon::ast::Ast> for TypeAst {
     fn from(ast: full_moon::ast::Ast) -> Self {
@@ -169,7 +175,7 @@ impl From<full_moon::ast::Block> for Block {
 impl From<full_moon::ast::Stmt> for Stmt {
     fn from(stmt: full_moon::ast::Stmt) -> Self {
         match stmt {
-            // full_moon::ast::Stmt::Assignment(assign) => unimplemented!(),
+            full_moon::ast::Stmt::Assignment(assign) => unimplemented!(),
             full_moon::ast::Stmt::LocalAssignment(local_assign) => {
                 let leading_tribia = local_assign.local_token().leading_trivia();
                 let ann_content = concat_tokens(leading_tribia);
@@ -206,26 +212,26 @@ impl From<full_moon::ast::Stmt> for Stmt {
 impl From<full_moon::ast::Expression> for Expression {
     fn from(expr: full_moon::ast::Expression) -> Self {
         match expr {
-            full_moon::ast::Expression::Number(tkn) => Expression::Number(LuaNumber {
+            full_moon::ast::Expression::Number(tkn) => Expression::Number {
                 span: Span {
                     start: Position::from(tkn.start_position()),
                     end: Position::from(tkn.end_position()),
                 },
-            }),
-            full_moon::ast::Expression::String(tkn) => Expression::String(LuaString {
+            },
+            full_moon::ast::Expression::String(tkn) => Expression::String {
                 span: Span {
                     start: Position::from(tkn.start_position()),
                     end: Position::from(tkn.end_position()),
                 },
-            }),
+            },
             full_moon::ast::Expression::Symbol(tkn) => match tkn.token_type() {
                 full_moon::tokenizer::TokenType::Symbol { symbol } => match symbol {
-                    full_moon::tokenizer::Symbol::False => Expression::Boolean(LuaBoolean {
+                    full_moon::tokenizer::Symbol::False => Expression::Boolean{
                         span: Span {
                             start: Position::from(tkn.start_position()),
                             end: Position::from(tkn.end_position()),
                         },
-                    }),
+                    },
                     _ => unimplemented!(),
                 },
                 _ => unimplemented!(),
@@ -252,10 +258,10 @@ impl From<full_moon::ast::BinOp> for BinOp {
     #[rustfmt::skip]
     fn from(binop: full_moon::ast::BinOp) -> Self {
         match binop {
-            full_moon::ast::BinOp::Plus(_)  => BinOp::Add,
-            full_moon::ast::BinOp::Minus(_) => BinOp::Sub,
-            full_moon::ast::BinOp::Star(_)  => BinOp::Mul,
-            full_moon::ast::BinOp::Slash(_) => BinOp::Div,
+            full_moon::ast::BinOp::Plus(tkn)  => BinOp::Add(Span::from(tkn.clone())),
+            full_moon::ast::BinOp::Minus(tkn) => BinOp::Sub(Span::from(tkn.clone())),
+            full_moon::ast::BinOp::Star(tkn)  => BinOp::Mul(Span::from(tkn.clone())),
+            full_moon::ast::BinOp::Slash(tkn) => BinOp::Div(Span::from(tkn.clone())),
             _ => unimplemented!()
         }
     }
