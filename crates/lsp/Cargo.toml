@@ -3,5 +3,15 @@ name = "typua-lsp"
 version = "0.1.0"
 edition = "2024"
 
+[lib]
+name = "typua_lsp"
+path = "src/lib.rs"
+
 [dependencies]
-anyhow = { workspace = true }
+typua-ty.workspace = true
+anyhow.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+tokio.workspace = true
+tower-lsp = "0.20"
+xdg = "3.0"

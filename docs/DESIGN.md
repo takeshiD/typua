@@ -1,3 +1,50 @@
+# System Design
+## Architecture
+アーキテクチャはオニオンアーキテクチャをベースとしています。ドメイン部を型検査に関するものとしている。
+
+```mermaid
+graph TB
+    subgraph "UserInterface"
+        LSP["Language Server"]
+        CLI["Command Line Interface"]
+    end
+
+    subgraph "Service Orchestration"
+        ANALYZE_SERVICE[Analyze Service]
+    end
+    subgraph "Workspace Management"
+        WORKSPACE[Workspace]
+    end
+    subgraph "Core Analysis"
+        PARSER[Parser]
+        BINDER[Binder]
+        TYPE_CHECKER[TypeChecker]
+    end
+    subgraph "PersistData"
+        ENV[TypeEnv]
+        CFG[FlowGraph]
+    end
+    
+    CLI --> ANALYZE_SERVICE
+    LSP --> ANALYZE_SERVICE
+    ANALYZE_SERVICE --> WORKSPACE
+    WORKSPACE --SourceCode--> PARSER
+    PARSER --TypeAST--> BINDER
+    BINDER --TypeEnv, CFG--> TYPE_CHECKER
+    PARSER --TypeAST--> TYPE_CHECKER
+    TYPE_CHECKER --> OUTPUT
+    OUTPUT --> LSP
+    
+    style LSP fill:#d4edda
+    style PARSER fill:#f8d7da
+    style BINDER fill:#f8d7da
+    style TYPE_CHECKER fill:#f8d7da
+    style OUTPUT fill:#d1ecf1
+```
+
+## DataFlow
+
+
 # Roadmap
 設計検証や実装負荷のバランスから段階的な実装を考える.
 
@@ -76,19 +123,4 @@
 > References  
 > [プロセスのVSZ,RSSとfree,meminfoの関係を実機で確認する](https://nopipi.hatenablog.com/entry/2017/11/11/213214)
 > [VSZ, RSS(anonymous, file)の理解を深める](https://christina04.hatenablog.com/entry/understand-memory)
-
-
-# Architecture
-アーキテクチャは以下のような層構造を採用し、ドメイン部を型検査に関するものとしている。
-
-- ドメイン
-    - VFS
-    - パーサー
-    - バインダー
-    - 型評価・型検査
-- UI
-    - LSP
-    - CLI
-- Repository
-    - VFS Repository
 

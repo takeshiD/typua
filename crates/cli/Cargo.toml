@@ -1,10 +1,16 @@
 [package]
 name = "typua-cli"
 edition = "2024"
-version = { workspace = true }
+version.workspace = true
 
 [[bin]]
 name = "typua"
 path = "src/main.rs"
 
 [dependencies]
+typua-lsp.workspace = true
+tokio.workspace = true
+tokio-macros.workspace = true
+anyhow.workspace = true
+
+clap = { version = "4.5", features = ["derive"] }

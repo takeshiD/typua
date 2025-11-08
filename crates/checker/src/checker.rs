@@ -145,7 +145,7 @@ mod tests {
             }
         );
 
-        // abnormal test: number + bool
+        // typecheck diagnostic test: number + bool
         let env = TypeEnv::new();
         let expr = Expression::BinaryOperator {
             lhs: Box::new(Expression::Boolean {

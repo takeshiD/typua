@@ -8,6 +8,11 @@ pub enum TypuaError {
     Annotation(#[from] AnnotationError),
     #[error("bind error: {0}")]
     Bind(#[from] BindError),
+    #[error("failed to start tokio runtime: {source}")]
+    Runtime {
+        #[source]
+        source: std::io::Error,
+    },
 }
 
 #[derive(Debug, Error)]
