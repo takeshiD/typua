@@ -105,7 +105,10 @@ pub enum Expression {
         returns: Vec<TypeKind>,
     },
     FunctionCall(FunctionCall),
-    Var(String),
+    Var {
+        span: Span,
+        symbol: String,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -226,7 +229,7 @@ impl From<full_moon::ast::Expression> for Expression {
             },
             full_moon::ast::Expression::Symbol(tkn) => match tkn.token_type() {
                 full_moon::tokenizer::TokenType::Symbol { symbol } => match symbol {
-                    full_moon::tokenizer::Symbol::False => Expression::Boolean{
+                    full_moon::tokenizer::Symbol::False => Expression::Boolean {
                         span: Span {
                             start: Position::from(tkn.start_position()),
                             end: Position::from(tkn.end_position()),
@@ -249,6 +252,16 @@ impl From<full_moon::ast::Expression> for Expression {
                     expr: Box::new(Expression::from(*expression)),
                 }
             }
+            full_moon::ast::Expression::Var(var) => match var {
+                full_moon::ast::Var::Expression(_expr) => {
+                    unimplemented!()
+                }
+                full_moon::ast::Var::Name(tkn) => Expression::Var {
+                    span: Span::from(tkn.clone()),
+                    symbol: tkn.token().to_string(),
+                },
+                _ => unimplemented!(),
+            },
             _ => unimplemented!(),
         }
     }

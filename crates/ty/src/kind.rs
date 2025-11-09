@@ -1,5 +1,3 @@
-use std::fmt::write;
-
 #[derive(Debug, Clone, PartialEq)]
 pub enum TypeKind {
     Any,

@@ -36,7 +36,15 @@ impl Default for TypeEnv {
 
 #[derive(Debug, Hash, Eq, PartialEq, Clone)]
 pub struct Symbol {
-    val: String,
+    pub val: String,
+}
+
+impl Symbol {
+    pub fn new(val: String) -> Self {
+        Self {
+            val
+        }
+    }
 }
 
 impl From<String> for Symbol {

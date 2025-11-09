@@ -1,7 +1,7 @@
 use crate::result::{CheckResult, EvalErr, EvalType};
 use typua_binder::{Symbol, TypeEnv};
 use typua_parser::ast::{BinOp, Block, Expression, Stmt, TypeAst};
-use typua_span::Span;
+use typua_span::{Position, Span};
 use typua_ty::{
     diagnostic::{Diagnostic, DiagnosticKind},
     kind::TypeKind,
@@ -12,12 +12,11 @@ pub fn typecheck(ast: &TypeAst, env: &TypeEnv) {}
 
 fn typecheck_block(block: &Block, env: &TypeEnv) {}
 
-fn typecheck_stmt(stmt: &Stmt, env: &mut TypeEnv) -> CheckResult {
+fn typecheck_stmt(stmt: &Stmt, env: &TypeEnv) -> CheckResult {
     match stmt {
         Stmt::LocalAssign(local_assign) => {
             let mut diags: Vec<Diagnostic> = Vec::new();
             for (var, expr) in local_assign.vars.iter().zip(local_assign.exprs.iter()) {
-                // let ty = eval_expr(expr, env);
                 match eval_expr(expr, env) {
                     Ok(eval_ty) => {
                         let maybe_ann_ty = env.get(&Symbol::from(var.name.clone()));
@@ -86,6 +85,16 @@ fn eval_expr(expr: &Expression, env: &TypeEnv) -> Result<EvalType, EvalErr> {
                     (_, _) => unimplemented!(),
                 },
                 _ => unimplemented!(),
+            }
+        }
+        Expression::Var(symbol) => {
+            match env.get(&Symbol::new(*symbol)) {
+                Some(ty) => {
+                    Ok(EvalType {
+                        span: 
+                        ty,
+                    })
+                }
             }
         }
         _ => unimplemented!(),

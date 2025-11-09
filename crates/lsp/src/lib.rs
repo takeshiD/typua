@@ -1,53 +1,12 @@
+mod backend;
+use crate::backend::Backend;
 use std::fs::File;
 use std::sync::Arc;
 
-use tower_lsp::jsonrpc::Result as LspResult;
-use tower_lsp::lsp_types::*;
-use tower_lsp::{Client, LanguageServer, LspService, Server};
-use tracing::info;
+use tower_lsp::{LspService, Server};
 use tracing_subscriber::EnvFilter;
 
 use typua_ty::error::TypuaError;
-
-#[derive(Debug)]
-struct Backend {
-    client: Client,
-}
-
-#[tower_lsp::async_trait]
-impl LanguageServer for Backend {
-    async fn initialize(&self, _: InitializeParams) -> LspResult<InitializeResult> {
-        info!("initialize");
-        Ok(InitializeResult {
-            server_info: None,
-            capabilities: ServerCapabilities {
-                text_document_sync: Some(TextDocumentSyncCapability::Kind(
-                    TextDocumentSyncKind::INCREMENTAL,
-                )),
-                ..ServerCapabilities::default()
-            },
-        })
-    }
-    async fn initialized(&self, _: InitializedParams) {
-        info!("initialized");
-        self.client
-            .log_message(MessageType::INFO, "initialized")
-            .await;
-    }
-    async fn shutdown(&self) -> LspResult<()> {
-        info!("shutdown");
-        Ok(())
-    }
-    async fn did_open(&self, params: DidOpenTextDocumentParams) {
-        info!("did open: {}", params.text_document.uri);
-        self.client
-            .log_message(
-                MessageType::INFO,
-                format!("File open {}", params.text_document.uri),
-            )
-            .await;
-    }
-}
 
 async fn run_lsp_service() {
     let (stdin, stdout) = (tokio::io::stdin(), tokio::io::stdout());
@@ -55,6 +14,7 @@ async fn run_lsp_service() {
     Server::new(stdin, stdout, socket).serve(service).await;
 }
 
+/// Entry point for lsp
 pub fn handle_lsp_service() {
     let log_name = "log.jsonl";
     let log_path = match xdg::BaseDirectories::with_prefix("typua").place_cache_file(log_name) {
