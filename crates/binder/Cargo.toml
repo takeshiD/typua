@@ -11,3 +11,4 @@ path = "src/lib.rs"
 typua-parser.workspace = true
 typua-ty.workspace = true
 im.workspace = true
+itertools.workspace = true

@@ -1,7 +1,10 @@
+use crate::{TypuaError, error::OperationError};
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum TypeKind {
+    Unknown, // top
+    Never,   // bottom
     Any,
-    Never,
     Nil,
     Number,
     Boolean,
@@ -25,9 +28,81 @@ pub enum TypeKind {
     },
 }
 
+impl TypeKind {
+    /// sub_ty <: sup_ty
+    ///   true  => sub_ty is subtype of sup_ty
+    ///   false => sub_ty is not subtype of sup_ty
+    pub fn subtype(sub_ty: &TypeKind, sup_ty: &TypeKind) -> bool {
+        match sup_ty {
+            TypeKind::Unknown => true,
+            TypeKind::Never => sub_ty == sup_ty,
+            TypeKind::Any => *sub_ty != TypeKind::Unknown,
+            TypeKind::Nil => *sub_ty == TypeKind::Nil,
+            TypeKind::Number => {
+                matches!(
+                    *sub_ty,
+                    TypeKind::Number | TypeKind::Any | TypeKind::Unknown
+                )
+            }
+            TypeKind::Boolean => {
+                matches!(
+                    *sub_ty,
+                    TypeKind::Boolean | TypeKind::Any | TypeKind::Unknown
+                )
+            }
+            TypeKind::String => {
+                matches!(
+                    *sub_ty,
+                    TypeKind::String | TypeKind::Any | TypeKind::Unknown
+                )
+            }
+            _ => unimplemented!(),
+        }
+    }
+    pub fn can_add(sub_ty: &TypeKind, sup_ty: &TypeKind) -> Result<TypeKind, TypuaError> {
+        match sup_ty {
+            TypeKind::Unknown => Err(TypuaError::Operation(OperationError::AddFailed(
+                "unknown".to_string(),
+            ))),
+            TypeKind::Never => Err(TypuaError::Operation(OperationError::AddFailed(
+                "never".to_string(),
+            ))),
+            TypeKind::Any => {
+                if *sub_ty != TypeKind::Unknown {
+                    Ok(TypeKind::Any)
+                } else {
+                    Err(TypuaError::Operation(OperationError::AddFailed(
+                        "any".to_string(),
+                    )))
+                }
+            }
+            TypeKind::Nil => Err(TypuaError::Operation(OperationError::AddFailed(
+                "nil".to_string(),
+            ))),
+            TypeKind::Number => {
+                if *sub_ty == TypeKind::Number {
+                    Ok(TypeKind::Number)
+                } else {
+                    Err(TypuaError::Operation(OperationError::AddFailed(
+                        "number".to_string(),
+                    )))
+                }
+            }
+            TypeKind::Boolean => Err(TypuaError::Operation(OperationError::AddFailed(
+                "boolean".to_string(),
+            ))),
+            TypeKind::String => Err(TypuaError::Operation(OperationError::AddFailed(
+                "string".to_string(),
+            ))),
+            _ => unimplemented!(),
+        }
+    }
+}
+
 impl std::fmt::Display for TypeKind {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         let s = match self {
+            TypeKind::Unknown => "unknown".to_string(),
             TypeKind::Any => "any".to_string(),
             TypeKind::Never => "never".to_string(),
             TypeKind::Nil => "nil".to_string(),

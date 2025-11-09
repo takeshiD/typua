@@ -8,6 +8,8 @@ pub enum TypuaError {
     Annotation(#[from] AnnotationError),
     #[error("bind error: {0}")]
     Bind(#[from] BindError),
+    #[error("operation error: {0}")]
+    Operation(#[from] OperationError),
     #[error("failed to start tokio runtime: {source}")]
     Runtime {
         #[source]
@@ -41,4 +43,10 @@ pub enum BindError {
     InsertionFailed(String),
     #[error("Unexpected occured")]
     UnexpectedOccured(String),
+}
+
+#[derive(Debug, Error)]
+pub enum OperationError {
+    #[error("Add operation failed")]
+    AddFailed(String),
 }

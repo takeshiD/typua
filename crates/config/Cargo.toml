@@ -8,3 +8,4 @@ name = "typua_config"
 path = "src/lib.rs"
 
 [dependencies]
+serde.workspace = true

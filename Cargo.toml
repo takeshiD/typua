@@ -31,6 +31,8 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["json", "env-filter"] }
 tokio = { version = "1", features = ["full"] }
 tokio-macros = "2.6"
+serde = "1.0"
+itertools = "0.14"
 
 ## for development
 unindent = "0.2"

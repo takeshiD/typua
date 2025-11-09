@@ -10,4 +10,5 @@ pub struct Diagnostic {
 #[derive(Debug, Clone, PartialEq)]
 pub enum DiagnosticKind {
     TypeMismatch,
+    NotDeclaredVariable,
 }

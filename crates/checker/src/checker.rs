@@ -1,16 +1,24 @@
 use crate::result::{CheckResult, EvalErr, EvalType};
 use typua_binder::{Symbol, TypeEnv};
 use typua_parser::ast::{BinOp, Block, Expression, Stmt, TypeAst};
-use typua_span::{Position, Span};
+use typua_span::Span;
 use typua_ty::{
     diagnostic::{Diagnostic, DiagnosticKind},
     kind::TypeKind,
 };
 
 /// entry point typechcking
-pub fn typecheck(ast: &TypeAst, env: &TypeEnv) {}
+pub fn typecheck(ast: &TypeAst, env: &TypeEnv) -> CheckResult {
+    typecheck_block(&ast.block, env)
+}
 
-fn typecheck_block(block: &Block, env: &TypeEnv) {}
+fn typecheck_block(block: &Block, env: &TypeEnv) -> CheckResult {
+    let mut result = CheckResult::new();
+    for stmt in block.stmts.iter() {
+        result = CheckResult::merge(&result, &typecheck_stmt(stmt, env));
+    }
+    result
+}
 
 fn typecheck_stmt(stmt: &Stmt, env: &TypeEnv) -> CheckResult {
     match stmt {
@@ -21,7 +29,7 @@ fn typecheck_stmt(stmt: &Stmt, env: &TypeEnv) -> CheckResult {
                     Ok(eval_ty) => {
                         let maybe_ann_ty = env.get(&Symbol::from(var.name.clone()));
                         if let Some(ann_ty) = maybe_ann_ty
-                            && ann_ty != eval_ty.ty
+                            && !TypeKind::subtype(&eval_ty.ty, &ann_ty)
                         {
                             diags.push(Diagnostic {
                                 message: format!("cannot assign `{}` to `{}`", eval_ty.ty, ann_ty),
@@ -65,38 +73,39 @@ fn eval_expr(expr: &Expression, env: &TypeEnv) -> Result<EvalType, EvalErr> {
                             span: right_span,
                             ty: right_ty,
                         }),
-                    ) => {
-                        if left_ty == right_ty {
-                            Ok(EvalType {
+                    ) => match TypeKind::can_add(&left_ty, &right_ty) {
+                        Ok(ty) => Ok(EvalType {
+                            span: Span::new(left_span.start, right_span.end),
+                            ty,
+                        }),
+                        Err(_e) => Err(EvalErr {
+                            span: Span::new(left_span.start.clone(), right_span.end.clone()),
+                            diagnostic: Diagnostic {
+                                message: format!("cannot add `{}` and `{}`", left_ty, right_ty),
+                                kind: DiagnosticKind::TypeMismatch,
                                 span: Span::new(left_span.start, right_span.end),
-                                ty: left_ty,
-                            })
-                        } else {
-                            Err(EvalErr {
-                                span: Span::new(left_span.start.clone(), right_span.end.clone()),
-                                diagnostic: Diagnostic {
-                                    message: format!("cannot add `{}` and `{}`", left_ty, right_ty),
-                                    kind: DiagnosticKind::TypeMismatch,
-                                    span: Span::new(left_span.start, right_span.end),
-                                },
-                            })
-                        }
-                    }
+                            },
+                        }),
+                    },
                     (_, _) => unimplemented!(),
                 },
                 _ => unimplemented!(),
             }
         }
-        Expression::Var(symbol) => {
-            match env.get(&Symbol::new(*symbol)) {
-                Some(ty) => {
-                    Ok(EvalType {
-                        span: 
-                        ty,
-                    })
-                }
-            }
-        }
+        Expression::Var { span, symbol } => match env.get(&Symbol::new(symbol.clone())) {
+            Some(ty) => Ok(EvalType {
+                span: span.clone(),
+                ty,
+            }),
+            None => Err(EvalErr {
+                span: span.clone(),
+                diagnostic: Diagnostic {
+                    span: span.clone(),
+                    kind: DiagnosticKind::NotDeclaredVariable,
+                    message: format!("'{}' is not declared", *symbol),
+                },
+            }),
+        },
         _ => unimplemented!(),
     }
 }
@@ -154,7 +163,7 @@ mod tests {
             }
         );
 
-        // typecheck diagnostic test: number + bool
+        // TypeMismatch: number + bool
         let env = TypeEnv::new();
         let expr = Expression::BinaryOperator {
             lhs: Box::new(Expression::Boolean {
@@ -181,6 +190,107 @@ mod tests {
                     message: "cannot add `boolean` and `number`".to_string(),
                     kind: DiagnosticKind::TypeMismatch,
                     span: Span::new(Position::new(0, 0), Position::new(0, 10)),
+                }
+            }
+        );
+        // normal test: binop vars
+        let mut env = TypeEnv::new();
+        let _ = env.insert(&Symbol::new("x".to_string()), &TypeKind::Number);
+        let _ = env.insert(&Symbol::new("y".to_string()), &TypeKind::Number);
+        let expr = Expression::BinaryOperator {
+            lhs: Box::new(Expression::Var {
+                span: Span {
+                    start: Position::new(0, 0),
+                    end: Position::new(0, 0),
+                },
+                symbol: "x".to_string(),
+            }),
+            rhs: Box::new(Expression::Var {
+                span: Span {
+                    start: Position::new(0, 0),
+                    end: Position::new(0, 10),
+                },
+                symbol: "y".to_string(),
+            }),
+            binop: BinOp::Add(Span::new(Position::new(0, 0), Position::new(0, 0))),
+        };
+        let ret = eval_expr(&expr, &env);
+        assert_eq!(ret.is_ok(), true);
+        assert_eq!(
+            ret.unwrap(),
+            EvalType {
+                span: Span::new(Position::new(0, 0), Position::new(0, 10)),
+                ty: TypeKind::Number,
+            }
+        );
+        // abnormal test: binop vars
+        let mut env = TypeEnv::new();
+        let _ = env.insert(&Symbol::new("x".to_string()), &TypeKind::Number);
+        let _ = env.insert(&Symbol::new("y".to_string()), &TypeKind::Boolean);
+        let expr = Expression::BinaryOperator {
+            lhs: Box::new(Expression::Var {
+                span: Span {
+                    start: Position::new(0, 0),
+                    end: Position::new(0, 0),
+                },
+                symbol: "x".to_string(),
+            }),
+            rhs: Box::new(Expression::Var {
+                span: Span {
+                    start: Position::new(0, 0),
+                    end: Position::new(0, 10),
+                },
+                symbol: "y".to_string(),
+            }),
+            binop: BinOp::Add(Span::new(Position::new(0, 0), Position::new(0, 0))),
+        };
+        let ret = eval_expr(&expr, &env);
+        assert_eq!(ret.is_err(), true);
+        assert_eq!(
+            ret.unwrap_err(),
+            EvalErr {
+                span: Span::new(Position::new(0, 0), Position::new(0, 10)),
+                diagnostic: Diagnostic {
+                    message: "cannot add `number` and `boolean`".to_string(),
+                    kind: DiagnosticKind::TypeMismatch,
+                    span: Span::new(Position::new(0, 0), Position::new(0, 10)),
+                }
+            }
+        );
+    }
+    #[test]
+    fn eval_expr_var() {
+        let mut env = TypeEnv::new();
+        let _ = env.insert(&Symbol::new("x".to_string()), &TypeKind::Number);
+        // normal test: number
+        let expr = Expression::Var {
+            span: Span::new(Position::new(0, 0), Position::new(0, 10)),
+            symbol: "x".to_string(),
+        };
+        let ret = eval_expr(&expr, &env);
+        assert_eq!(ret.is_ok(), true);
+        assert_eq!(
+            ret.unwrap(),
+            EvalType {
+                span: Span::new(Position::new(0, 0), Position::new(0, 10)),
+                ty: TypeKind::Number,
+            }
+        );
+        // abnormal test: number
+        let expr = Expression::Var {
+            span: Span::new(Position::new(0, 0), Position::new(0, 10)),
+            symbol: "y".to_string(),
+        };
+        let ret = eval_expr(&expr, &env);
+        assert_eq!(ret.is_err(), true);
+        assert_eq!(
+            ret.unwrap_err(),
+            EvalErr {
+                span: Span::new(Position::new(0, 0), Position::new(0, 10)),
+                diagnostic: Diagnostic {
+                    span: Span::new(Position::new(0, 0), Position::new(0, 10)),
+                    kind: DiagnosticKind::NotDeclaredVariable,
+                    message: "'y' is not declared".to_string()
                 }
             }
         );
