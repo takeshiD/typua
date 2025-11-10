@@ -9,9 +9,7 @@ path = "src/main.rs"
 
 [dependencies]
 typua-lsp.workspace = true
-typua-checker.workspace = true
-typua-parser.workspace = true
-typua-binder.workspace = true
+typua-analyzer.workspace = true
 typua-config.workspace = true
 tokio.workspace = true
 tokio-macros.workspace = true

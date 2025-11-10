@@ -20,6 +20,7 @@ typua-checker = { path = "crates/checker" }
 typua-config = { path = "crates/config" }
 typua-vfs = { path = "crates/vfs" }
 typua-lsp = { path = "crates/lsp" }
+typua-analyzer = { path = "crates/analyzer" }
 
 # external dependencies
 ## for release

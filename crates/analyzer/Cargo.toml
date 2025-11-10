@@ -1,0 +1,19 @@
+[package]
+name = "typua-analyzer"
+edition.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+authors.workspace = true
+license.workspace = true
+version.workspace = true
+
+[lib]
+name = "typua_analyzer"
+
+[dependencies]
+typua-checker.workspace = true
+typua-binder.workspace = true
+typua-parser.workspace = true
+typua-config.workspace = true
+typua-ty.workspace = true
+anyhow.workspace = true
