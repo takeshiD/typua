@@ -21,7 +21,6 @@ nom_locate = "5.0.0"
 ## use in workspace
 anyhow.workspace = true
 thiserror.workspace = true
-im.workspace = true
 full_moon.workspace = true
 
 [dev-dependencies]

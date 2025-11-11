@@ -1,17 +1,16 @@
-// use std::collections::HashMap;
-use im::HashMap;
+use indexmap::IndexMap;
 use typua_ty::TypeKind;
 use typua_ty::{BindError, TypuaError};
 
 #[derive(Debug, Clone)]
 pub struct TypeEnv {
-    vars: HashMap<Symbol, TypeKind>,
+    vars: IndexMap<Symbol, TypeKind>,
 }
 
 impl TypeEnv {
     pub fn new() -> Self {
         Self {
-            vars: HashMap::new(),
+            vars: IndexMap::new(),
         }
     }
     pub fn insert(&mut self, symbol: &Symbol, ty: &TypeKind) -> Result<(), TypuaError> {
@@ -41,9 +40,7 @@ pub struct Symbol {
 
 impl Symbol {
     pub fn new(val: String) -> Self {
-        Self {
-            val
-        }
+        Self { val }
     }
 }
 

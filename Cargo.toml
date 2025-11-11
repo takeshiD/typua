@@ -26,7 +26,6 @@ typua-analyzer = { path = "crates/analyzer" }
 ## for release
 anyhow = "1"
 thiserror = "2"
-im = "15"
 full_moon = "2"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["json", "env-filter"] }
@@ -34,6 +33,7 @@ tokio = { version = "1", features = ["full"] }
 tokio-macros = "2.6"
 serde = "1.0"
 itertools = "0.14"
+indexmap = "2.12"
 
 ## for development
 unindent = "0.2"

@@ -106,8 +106,7 @@ pub enum Expression {
     },
     FunctionCall(FunctionCall),
     Var {
-        span: Span,
-        symbol: String,
+        var: Var,
     },
 }
 
@@ -134,6 +133,12 @@ pub enum UnOp {
     Not,
     Hash,
     Tilde,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Var {
+    pub span: Span,
+    pub symbol: String,
 }
 
 // #[derive(Debug, Clone, PartialEq)]
@@ -257,8 +262,10 @@ impl From<full_moon::ast::Expression> for Expression {
                     unimplemented!()
                 }
                 full_moon::ast::Var::Name(tkn) => Expression::Var {
-                    span: Span::from(tkn.clone()),
-                    symbol: tkn.token().to_string(),
+                    var: Var {
+                        span: Span::from(tkn.clone()),
+                        symbol: tkn.token().to_string(),
+                    },
                 },
                 _ => unimplemented!(),
             },

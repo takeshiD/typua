@@ -10,5 +10,5 @@ path = "src/lib.rs"
 [dependencies]
 typua-parser.workspace = true
 typua-ty.workspace = true
-im.workspace = true
 itertools.workspace = true
+indexmap.workspace = true

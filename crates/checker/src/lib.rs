@@ -1,3 +1,3 @@
 mod checker;
 mod result;
-pub use checker::typecheck;
+pub use crate::checker::Checker;

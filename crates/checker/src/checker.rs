@@ -1,112 +1,97 @@
-use crate::result::{CheckResult, EvalErr, EvalType};
 use typua_binder::{Symbol, TypeEnv};
-use typua_parser::ast::{BinOp, Block, Expression, Stmt, TypeAst};
-use typua_span::Span;
+use typua_parser::ast::{BinOp, Block, Expression, Stmt, TypeAst, Var};
 use typua_ty::{
     diagnostic::{Diagnostic, DiagnosticKind},
     kind::TypeKind,
 };
 
-/// entry point typechcking
-pub fn typecheck(ast: &TypeAst, env: &TypeEnv) -> CheckResult {
-    typecheck_block(&ast.block, env)
+use crate::result::CheckResult;
+
+#[derive(Debug)]
+pub struct Checker {
+    env: TypeEnv,
+    diagnostics: Vec<Diagnostic>,
 }
 
-fn typecheck_block(block: &Block, env: &TypeEnv) -> CheckResult {
-    let mut result = CheckResult::new();
-    for stmt in block.stmts.iter() {
-        result = CheckResult::merge(&result, &typecheck_stmt(stmt, env));
+impl Checker {
+    pub fn new(env: TypeEnv) -> Self {
+        Self {
+            env,
+            diagnostics: Vec::new(),
+        }
     }
-    result
-}
-
-fn typecheck_stmt(stmt: &Stmt, env: &TypeEnv) -> CheckResult {
-    match stmt {
-        Stmt::LocalAssign(local_assign) => {
-            let mut diags: Vec<Diagnostic> = Vec::new();
-            for (var, expr) in local_assign.vars.iter().zip(local_assign.exprs.iter()) {
-                match eval_expr(expr, env) {
-                    Ok(eval_ty) => {
-                        let maybe_ann_ty = env.get(&Symbol::from(var.name.clone()));
-                        if let Some(ann_ty) = maybe_ann_ty
-                            && !TypeKind::subtype(&eval_ty.ty, &ann_ty)
-                        {
-                            diags.push(Diagnostic {
-                                message: format!("cannot assign `{}` to `{}`", eval_ty.ty, ann_ty),
-                                kind: DiagnosticKind::TypeMismatch,
-                                span: eval_ty.span,
-                            })
-                        }
-                    }
-                    Err(eval_err) => {
-                        diags.push(eval_err.diagnostic);
+    pub fn typecheck(mut self, ast: &TypeAst) -> CheckResult {
+        self.typecheck_block(&ast.block);
+        CheckResult {
+            diagnostics: self.diagnostics,
+        }
+    }
+    fn typecheck_block(&mut self, block: &Block) {
+        for stmt in block.stmts.iter() {
+            self.typecheck_stmt(stmt);
+        }
+    }
+    fn typecheck_stmt(&mut self, stmt: &Stmt) {
+        match stmt {
+            Stmt::LocalAssign(local_assign) => {
+                for (var, expr) in local_assign.vars.iter().zip(local_assign.exprs.iter()) {
+                    let eval_ty = self.eval_expr(expr);
+                    let maybe_ann_ty = self.env.get(&Symbol::from(var.name.clone()));
+                    if let Some(ann_ty) = maybe_ann_ty
+                        && !TypeKind::subtype(&eval_ty, &ann_ty)
+                    {
+                        self.diagnostics.push(Diagnostic {
+                            message: format!("cannot assign `{}` to `{}`", eval_ty, ann_ty),
+                            kind: DiagnosticKind::TypeMismatch,
+                            span: var.span.clone(),
+                        });
                     }
                 }
             }
-            CheckResult { diagnostics: diags }
+            _ => unimplemented!(),
         }
-        _ => unimplemented!(),
     }
-}
-
-fn eval_expr(expr: &Expression, env: &TypeEnv) -> Result<EvalType, EvalErr> {
-    match expr {
-        Expression::Number { span } => Ok(EvalType {
-            span: span.clone(),
-            ty: TypeKind::Number,
-        }),
-        Expression::Boolean { span } => Ok(EvalType {
-            span: span.clone(),
-            ty: TypeKind::Boolean,
-        }),
-        Expression::BinaryOperator { lhs, binop, rhs } => {
-            let lhs_eval = eval_expr(lhs, env);
-            let rhs_eval = eval_expr(rhs, env);
-            match binop {
-                BinOp::Add(_) => match (lhs_eval, rhs_eval) {
-                    (
-                        Ok(EvalType {
-                            span: left_span,
-                            ty: left_ty,
-                        }),
-                        Ok(EvalType {
-                            span: right_span,
-                            ty: right_ty,
-                        }),
-                    ) => match TypeKind::can_add(&left_ty, &right_ty) {
-                        Ok(ty) => Ok(EvalType {
-                            span: Span::new(left_span.start, right_span.end),
-                            ty,
-                        }),
-                        Err(_e) => Err(EvalErr {
-                            span: Span::new(left_span.start.clone(), right_span.end.clone()),
-                            diagnostic: Diagnostic {
-                                message: format!("cannot add `{}` and `{}`", left_ty, right_ty),
-                                kind: DiagnosticKind::TypeMismatch,
-                                span: Span::new(left_span.start, right_span.end),
-                            },
-                        }),
-                    },
-                    (_, _) => unimplemented!(),
-                },
-                _ => unimplemented!(),
+    fn eval_expr(&mut self, expr: &Expression) -> TypeKind {
+        match expr {
+            Expression::Number { .. } => TypeKind::Number,
+            Expression::Boolean { .. } => TypeKind::Boolean,
+            Expression::BinaryOperator { lhs, binop, rhs } => self.eval_binop(binop, lhs, rhs),
+            Expression::Var { var } => self.eval_var(var),
+            _ => unimplemented!(),
+        }
+    }
+    fn eval_binop(&mut self, binop: &BinOp, lhs: &Expression, rhs: &Expression) -> TypeKind {
+        let lhs_ty = self.eval_expr(lhs);
+        let rhs_ty = self.eval_expr(rhs);
+        match binop {
+            BinOp::Add(op_span) => match TypeKind::try_add(&lhs_ty, &rhs_ty) {
+                Ok(ty) => ty,
+                Err(_) => {
+                    let diagnostic = Diagnostic {
+                        span: op_span.clone(),
+                        kind: DiagnosticKind::TypeMismatch,
+                        message: format!("cannot add `{}` and `{}`", lhs_ty, rhs_ty),
+                    };
+                    self.diagnostics.push(diagnostic);
+                    TypeKind::Unknown
+                }
+            },
+            _ => unimplemented!(),
+        }
+    }
+    fn eval_var(&mut self, var: &Var) -> TypeKind {
+        match self.env.get(&Symbol::new(var.symbol.clone())) {
+            Some(ty) => ty,
+            None => {
+                let diagnostic = Diagnostic {
+                    span: var.span.clone(),
+                    kind: DiagnosticKind::NotDeclaredVariable,
+                    message: format!("'{}' is not declared", var.symbol.clone()),
+                };
+                self.diagnostics.push(diagnostic);
+                TypeKind::Unknown
             }
         }
-        Expression::Var { span, symbol } => match env.get(&Symbol::new(symbol.clone())) {
-            Some(ty) => Ok(EvalType {
-                span: span.clone(),
-                ty,
-            }),
-            None => Err(EvalErr {
-                span: span.clone(),
-                diagnostic: Diagnostic {
-                    span: span.clone(),
-                    kind: DiagnosticKind::NotDeclaredVariable,
-                    message: format!("'{}' is not declared", *symbol),
-                },
-            }),
-        },
-        _ => unimplemented!(),
     }
 }
 
@@ -118,26 +103,22 @@ mod tests {
     #[test]
     fn eval_expr_literal() {
         let env = TypeEnv::new();
+        let mut checker = Checker::new(env);
         let expr = Expression::Number {
             span: Span {
                 start: Position::new(0, 0),
                 end: Position::new(0, 0),
             },
         };
-        let ret = eval_expr(&expr, &env);
-        assert_eq!(ret.is_ok(), true);
-        assert_eq!(
-            ret.unwrap(),
-            EvalType {
-                span: Span::new(Position::new(0, 0), Position::new(0, 0)),
-                ty: TypeKind::Number
-            }
-        );
+        let ty = checker.eval_expr(&expr);
+        assert_eq!(ty, TypeKind::Number);
+        assert_eq!(checker.diagnostics.is_empty(), true);
     }
     #[test]
     fn eval_expr_binop() {
-        // normal test: number + number
+        // Normal Test: number + number
         let env = TypeEnv::new();
+        let mut checker = Checker::new(env);
         let expr = Expression::BinaryOperator {
             lhs: Box::new(Expression::Number {
                 span: Span {
@@ -153,108 +134,109 @@ mod tests {
             }),
             binop: BinOp::Add(Span::new(Position::new(0, 0), Position::new(0, 0))),
         };
-        let ret = eval_expr(&expr, &env);
-        assert_eq!(ret.is_ok(), true);
-        assert_eq!(
-            ret.unwrap(),
-            EvalType {
-                span: Span::new(Position::new(0, 0), Position::new(0, 10)),
-                ty: TypeKind::Number,
-            }
-        );
+        let ty = checker.eval_expr(&expr);
+        assert_eq!(ty, TypeKind::Number);
+        assert_eq!(checker.diagnostics.is_empty(), true);
 
         // TypeMismatch: number + bool
+        // (e.g) false + 12
         let env = TypeEnv::new();
+        let mut checker = Checker::new(env);
         let expr = Expression::BinaryOperator {
             lhs: Box::new(Expression::Boolean {
                 span: Span {
                     start: Position::new(0, 0),
-                    end: Position::new(0, 0),
+                    end: Position::new(0, 6),
                 },
             }),
+            binop: BinOp::Add(Span::new(Position::new(0, 7), Position::new(0, 8))),
             rhs: Box::new(Expression::Number {
                 span: Span {
-                    start: Position::new(0, 0),
-                    end: Position::new(0, 10),
+                    start: Position::new(0, 9),
+                    end: Position::new(0, 11),
                 },
             }),
-            binop: BinOp::Add(Span::new(Position::new(0, 0), Position::new(0, 0))),
         };
-        let ret = eval_expr(&expr, &env);
-        assert_eq!(ret.is_err(), true);
+        let ty = checker.eval_expr(&expr);
+        assert_eq!(ty, TypeKind::Unknown);
+        assert_eq!(checker.diagnostics.is_empty(), false);
         assert_eq!(
-            ret.unwrap_err(),
-            EvalErr {
-                span: Span::new(Position::new(0, 0), Position::new(0, 10)),
-                diagnostic: Diagnostic {
-                    message: "cannot add `boolean` and `number`".to_string(),
-                    kind: DiagnosticKind::TypeMismatch,
-                    span: Span::new(Position::new(0, 0), Position::new(0, 10)),
-                }
+            checker.diagnostics[0],
+            Diagnostic {
+                message: "cannot add `boolean` and `number`".to_string(),
+                kind: DiagnosticKind::TypeMismatch,
+                span: Span::new(Position::new(0, 7), Position::new(0, 8)),
             }
         );
-        // normal test: binop vars
+        // Normal Test: binop vars
         let mut env = TypeEnv::new();
         let _ = env.insert(&Symbol::new("x".to_string()), &TypeKind::Number);
         let _ = env.insert(&Symbol::new("y".to_string()), &TypeKind::Number);
+        let mut checker = Checker::new(env);
         let expr = Expression::BinaryOperator {
             lhs: Box::new(Expression::Var {
-                span: Span {
-                    start: Position::new(0, 0),
-                    end: Position::new(0, 0),
+                var: Var {
+                    span: Span {
+                        start: Position::new(0, 0),
+                        end: Position::new(0, 0),
+                    },
+                    symbol: "x".to_string(),
                 },
-                symbol: "x".to_string(),
             }),
             rhs: Box::new(Expression::Var {
-                span: Span {
-                    start: Position::new(0, 0),
-                    end: Position::new(0, 10),
+                var: Var {
+                    span: Span {
+                        start: Position::new(0, 0),
+                        end: Position::new(0, 10),
+                    },
+                    symbol: "y".to_string(),
                 },
-                symbol: "y".to_string(),
             }),
             binop: BinOp::Add(Span::new(Position::new(0, 0), Position::new(0, 0))),
         };
-        let ret = eval_expr(&expr, &env);
-        assert_eq!(ret.is_ok(), true);
-        assert_eq!(
-            ret.unwrap(),
-            EvalType {
-                span: Span::new(Position::new(0, 0), Position::new(0, 10)),
-                ty: TypeKind::Number,
-            }
-        );
-        // abnormal test: binop vars
+        let ty = checker.eval_expr(&expr);
+        assert_eq!(ty, TypeKind::Number);
+        assert_eq!(checker.diagnostics.is_empty(), true);
+
+        // TypeMismatch: binop vars
+        // (e.g)
+        // local x = 12
+        // local y = false
+        // x + y
         let mut env = TypeEnv::new();
         let _ = env.insert(&Symbol::new("x".to_string()), &TypeKind::Number);
         let _ = env.insert(&Symbol::new("y".to_string()), &TypeKind::Boolean);
+        let mut checker = Checker::new(env);
         let expr = Expression::BinaryOperator {
             lhs: Box::new(Expression::Var {
-                span: Span {
-                    start: Position::new(0, 0),
-                    end: Position::new(0, 0),
+                var: Var {
+                    span: Span {
+                        start: Position::new(2, 0),
+                        end: Position::new(2, 1),
+                    },
+                    symbol: "x".to_string(),
                 },
-                symbol: "x".to_string(),
             }),
+            binop: BinOp::Add(Span::new(Position::new(2, 2), Position::new(2, 3))),
             rhs: Box::new(Expression::Var {
-                span: Span {
-                    start: Position::new(0, 0),
-                    end: Position::new(0, 10),
+                var: Var {
+                    span: Span {
+                        start: Position::new(2, 4),
+                        end: Position::new(2, 5),
+                    },
+                    symbol: "y".to_string(),
                 },
-                symbol: "y".to_string(),
             }),
-            binop: BinOp::Add(Span::new(Position::new(0, 0), Position::new(0, 0))),
         };
-        let ret = eval_expr(&expr, &env);
-        assert_eq!(ret.is_err(), true);
+        let ty = checker.eval_expr(&expr);
+        assert_eq!(ty, TypeKind::Unknown);
+        assert_eq!(checker.diagnostics.len(), 1);
         assert_eq!(
-            ret.unwrap_err(),
-            EvalErr {
-                span: Span::new(Position::new(0, 0), Position::new(0, 10)),
-                diagnostic: Diagnostic {
-                    message: "cannot add `number` and `boolean`".to_string(),
-                    kind: DiagnosticKind::TypeMismatch,
-                    span: Span::new(Position::new(0, 0), Position::new(0, 10)),
-                }
+            checker.diagnostics[0],
+            Diagnostic {
+                message: "cannot add `number` and `boolean`".to_string(),
+                kind: DiagnosticKind::TypeMismatch,
+                span: Span::new(Position::new(2, 2), Position::new(2, 3))
             }
         );
     }
@@ -262,37 +244,41 @@ mod tests {
     fn eval_expr_var() {
         let mut env = TypeEnv::new();
         let _ = env.insert(&Symbol::new("x".to_string()), &TypeKind::Number);
+        let mut checker = Checker::new(env);
         // normal test: number
         let expr = Expression::Var {
-            span: Span::new(Position::new(0, 0), Position::new(0, 10)),
-            symbol: "x".to_string(),
-        };
-        let ret = eval_expr(&expr, &env);
-        assert_eq!(ret.is_ok(), true);
-        assert_eq!(
-            ret.unwrap(),
-            EvalType {
+            var: Var {
                 span: Span::new(Position::new(0, 0), Position::new(0, 10)),
-                ty: TypeKind::Number,
-            }
-        );
-        // abnormal test: number
+                symbol: "x".to_string(),
+            },
+        };
+        let ty = checker.eval_expr(&expr);
+        assert_eq!(ty, TypeKind::Number);
+        assert_eq!(checker.diagnostics.is_empty(), true);
+
+        // NotDeclaredVariable: number
+        // (e.g)
+        // local x = 12
+        // y
+        let mut env = TypeEnv::new();
+        let _ = env.insert(&Symbol::new("x".to_string()), &TypeKind::Number);
+        let mut checker = Checker::new(env);
         let expr = Expression::Var {
-            span: Span::new(Position::new(0, 0), Position::new(0, 10)),
-            symbol: "y".to_string(),
+            var: Var {
+                span: Span::new(Position::new(1, 0), Position::new(1, 1)),
+                symbol: "y".to_string(),
+            },
         };
-        let ret = eval_expr(&expr, &env);
-        assert_eq!(ret.is_err(), true);
+        let ty = checker.eval_expr(&expr);
+        assert_eq!(ty, TypeKind::Unknown);
+        assert_eq!(checker.diagnostics.is_empty(), false);
         assert_eq!(
-            ret.unwrap_err(),
-            EvalErr {
-                span: Span::new(Position::new(0, 0), Position::new(0, 10)),
-                diagnostic: Diagnostic {
-                    span: Span::new(Position::new(0, 0), Position::new(0, 10)),
-                    kind: DiagnosticKind::NotDeclaredVariable,
-                    message: "'y' is not declared".to_string()
-                }
+            checker.diagnostics[0],
+            Diagnostic {
+                message: "'y' is not declared".to_string(),
+                kind: DiagnosticKind::NotDeclaredVariable,
+                span: Span::new(Position::new(1, 0), Position::new(1, 1))
             }
-        );
+        )
     }
 }

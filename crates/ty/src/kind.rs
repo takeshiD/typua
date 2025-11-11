@@ -59,7 +59,7 @@ impl TypeKind {
             _ => unimplemented!(),
         }
     }
-    pub fn can_add(sub_ty: &TypeKind, sup_ty: &TypeKind) -> Result<TypeKind, TypuaError> {
+    pub fn try_add(sub_ty: &TypeKind, sup_ty: &TypeKind) -> Result<TypeKind, TypuaError> {
         match sup_ty {
             TypeKind::Unknown => Err(TypuaError::Operation(OperationError::AddFailed(
                 "unknown".to_string(),

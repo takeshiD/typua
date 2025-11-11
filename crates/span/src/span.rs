@@ -1,4 +1,5 @@
-#[derive(Debug, Clone, PartialEq, PartialOrd)]
+use std::hash::Hash;
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Hash)]
 pub struct Span {
     pub start: Position,
     pub end: Position,
@@ -10,7 +11,7 @@ impl Span {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, PartialOrd)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Hash)]
 pub struct Position {
     line: u32,
     character: u32,

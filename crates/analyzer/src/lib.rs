@@ -2,7 +2,7 @@ use std::fs::File;
 use std::io::Read;
 use std::path::PathBuf;
 use typua_binder::Binder;
-use typua_checker::typecheck;
+use typua_checker::Checker;
 use typua_config::LuaVersion;
 use typua_parser::parse;
 // use typua_ty::diagnostic::Diagnostic;
@@ -23,7 +23,8 @@ impl Analyzer {
         binder.bind(&ast);
         let env = binder.get_env();
         println!("Env: {:#?}", env);
-        let report = typecheck(&ast, &env);
+        let checker = Checker::new(env);
+        let report = checker.typecheck(&ast);
         println!("Report: {:#?}", report);
         println!("Errors: {:#?}", errors);
         Ok(())
