@@ -1206,6 +1206,7 @@ dependencies = [
 name = "typua-config"
 version = "0.1.3"
 dependencies = [
+ "full_moon",
  "serde",
 ]
 

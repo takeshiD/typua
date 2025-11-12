@@ -26,7 +26,7 @@ typua-analyzer = { path = "crates/analyzer" }
 ## for release
 anyhow = "1"
 thiserror = "2"
-full_moon = "2"
+full_moon = { version = "2", features = ["luajit"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["json", "env-filter"] }
 tokio = { version = "1", features = ["full"] }

@@ -44,12 +44,15 @@ fn main() -> anyhow::Result<()> {
                 .init();
             handle_lsp_service()
         }
-        Commands::Check(CheckCommand { path, version }) => {
+        Commands::Check(CheckCommand {
+            path,
+            lua_version: version,
+        }) => {
             tracing_subscriber::fmt()
                 .with_env_filter(EnvFilter::from_default_env())
                 .with_ansi(false)
                 .init();
-            debug!("Cli options: path={}, verion={}", path.display(), version);
+            debug!("Cli options: path={}, version={}", path.display(), version);
             let mut f = File::open(path)?;
             let mut content = String::new();
             f.read_to_string(&mut content)?;

@@ -5,19 +5,15 @@ use crate::ast::TypeAst;
 
 /// entry point for parsing lua script
 pub fn parse(code: &str, lua_version: LuaVersion) -> (TypeAst, Vec<TypuaError>) {
-    match lua_version {
-        LuaVersion::Lua51 => {
-            let result = full_moon::parse_fallible(code, full_moon::LuaVersion::lua51());
-            (
-                TypeAst::from(result.ast().clone()),
-                result
-                    .errors()
-                    .iter()
-                    .map(|e| TypuaError::Parse(ParseError::SyntaxError(format!("{}", e))))
-                    .collect(),
-            )
-        }
-    }
+    let result = full_moon::parse_fallible(code, lua_version.into());
+    (
+        TypeAst::from(result.ast().clone()),
+        result
+            .errors()
+            .iter()
+            .map(|e| TypuaError::Parse(ParseError::SyntaxError(format!("{}", e))))
+            .collect(),
+    )
 }
 
 #[cfg(test)]

@@ -22,6 +22,6 @@ pub struct ServeCommand {}
 pub struct CheckCommand {
     #[arg(default_value = ".")]
     pub path: PathBuf,
-    #[arg(default_value = "lua51")]
-    pub version: LuaVersion,
+    #[arg(short = 'l', long = "lua-version", default_value = "lua51")]
+    pub lua_version: LuaVersion,
 }
