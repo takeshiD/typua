@@ -8,10 +8,12 @@ name = "typua_lsp"
 path = "src/lib.rs"
 
 [dependencies]
+# internal
 typua-ty.workspace = true
+
+# external
 anyhow.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
 tokio.workspace = true
 tower-lsp = "0.20"
-xdg = "3.0"

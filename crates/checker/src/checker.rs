@@ -55,6 +55,8 @@ impl Checker {
         match expr {
             Expression::Number { .. } => TypeKind::Number,
             Expression::Boolean { .. } => TypeKind::Boolean,
+            Expression::Nil { .. } => TypeKind::Nil,
+            Expression::String { .. } => TypeKind::String,
             Expression::BinaryOperator { lhs, binop, rhs } => self.eval_binop(binop, lhs, rhs),
             Expression::Var { var } => self.eval_var(var),
             _ => unimplemented!(),

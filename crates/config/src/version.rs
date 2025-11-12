@@ -14,3 +14,12 @@ impl FromStr for LuaVersion {
         }
     }
 }
+
+impl std::fmt::Display for LuaVersion {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        let s = match self {
+            LuaVersion::Lua51 => "lua51",
+        };
+        write!(f, "{}", s)
+    }
+}

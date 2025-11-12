@@ -91,6 +91,9 @@ pub enum Expression {
     Boolean {
         span: Span,
     },
+    Nil {
+        span: Span,
+    },
     BinaryOperator {
         lhs: Box<Expression>,
         binop: BinOp,
@@ -116,6 +119,7 @@ pub enum BinOp {
     Sub(Span),
     Mul(Span),
     Div(Span),
+    Mod(Span),
     And(Span),
     Or(Span),
     GreaterThan(Span),
@@ -124,15 +128,15 @@ pub enum BinOp {
     LessThanEqual(Span),
     Equal(Span),
     NotEqual(Span),
-    Concat(Span),
+    TwoDots(Span),
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum UnOp {
-    Minus,
-    Not,
-    Hash,
-    Tilde,
+    Minus(Span),
+    Not(Span),
+    Hash(Span),
+    Tilde(Span),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -140,21 +144,6 @@ pub struct Var {
     pub span: Span,
     pub symbol: String,
 }
-
-// #[derive(Debug, Clone, PartialEq)]
-// pub struct LuaNumber {
-//     pub span: Span,
-// }
-//
-// #[derive(Debug, Clone, PartialEq)]
-// pub struct LuaString {
-//     pub span: Span,
-// }
-//
-// #[derive(Debug, Clone, PartialEq)]
-// pub struct LuaBoolean {
-//     pub span: Span,
-// }
 
 impl From<full_moon::ast::Ast> for TypeAst {
     fn from(ast: full_moon::ast::Ast) -> Self {
@@ -240,6 +229,18 @@ impl From<full_moon::ast::Expression> for Expression {
                             end: Position::from(tkn.end_position()),
                         },
                     },
+                    full_moon::tokenizer::Symbol::Nil => Expression::Nil {
+                        span: Span {
+                            start: Position::from(tkn.start_position()),
+                            end: Position::from(tkn.end_position()),
+                        },
+                    },
+                    full_moon::tokenizer::Symbol::True => Expression::Boolean {
+                        span: Span {
+                            start: Position::from(tkn.start_position()),
+                            end: Position::from(tkn.end_position()),
+                        },
+                    },
                     _ => unimplemented!(),
                 },
                 _ => unimplemented!(),
@@ -269,6 +270,9 @@ impl From<full_moon::ast::Expression> for Expression {
                 },
                 _ => unimplemented!(),
             },
+            full_moon::ast::Expression::Parentheses { expression, .. } => {
+                Expression::from(*expression)
+            }
             _ => unimplemented!(),
         }
     }
@@ -282,6 +286,16 @@ impl From<full_moon::ast::BinOp> for BinOp {
             full_moon::ast::BinOp::Minus(tkn) => BinOp::Sub(Span::from(tkn.clone())),
             full_moon::ast::BinOp::Star(tkn)  => BinOp::Mul(Span::from(tkn.clone())),
             full_moon::ast::BinOp::Slash(tkn) => BinOp::Div(Span::from(tkn.clone())),
+            full_moon::ast::BinOp::Percent(tkn) => BinOp::Mod(Span::from(tkn.clone())),
+            full_moon::ast::BinOp::TwoDots(tkn) => BinOp::TwoDots(Span::from(tkn.clone())),
+            full_moon::ast::BinOp::And(tkn) => BinOp::And(Span::from(tkn.clone())),
+            full_moon::ast::BinOp::Or(tkn) => BinOp::Or(Span::from(tkn.clone())),
+            full_moon::ast::BinOp::GreaterThan(tkn) => BinOp::GreaterThan(Span::from(tkn.clone())),
+            full_moon::ast::BinOp::GreaterThanEqual(tkn) => BinOp::GreaterThanEqual(Span::from(tkn.clone())),
+            full_moon::ast::BinOp::LessThan(tkn) => BinOp::LessThan(Span::from(tkn.clone())),
+            full_moon::ast::BinOp::LessThanEqual(tkn) => BinOp::LessThanEqual(Span::from(tkn.clone())),
+            full_moon::ast::BinOp::TwoEqual(tkn) => BinOp::Equal(Span::from(tkn.clone())),
+            full_moon::ast::BinOp::TildeEqual(tkn) => BinOp::NotEqual(Span::from(tkn.clone())),
             _ => unimplemented!()
         }
     }
@@ -291,9 +305,9 @@ impl From<full_moon::ast::UnOp> for UnOp {
     #[rustfmt::skip]
     fn from(unop: full_moon::ast::UnOp) -> Self {
         match unop {
-            full_moon::ast::UnOp::Minus(_)  => UnOp::Minus,
-            full_moon::ast::UnOp::Hash(_)   => UnOp::Hash,
-            full_moon::ast::UnOp::Not(_)    => UnOp::Not,
+            full_moon::ast::UnOp::Minus(tkn)  => UnOp::Minus(Span::from(tkn.clone())),
+            full_moon::ast::UnOp::Hash(tkn)   => UnOp::Hash(Span::from(tkn.clone())),
+            full_moon::ast::UnOp::Not(tkn)    => UnOp::Not(Span::from(tkn.clone())),
             _ => unimplemented!()
         }
     }

@@ -20,6 +20,8 @@ pub struct ServeCommand {}
 
 #[derive(Debug, Parser)]
 pub struct CheckCommand {
-    pub path: Option<PathBuf>,
-    pub version: Option<LuaVersion>,
+    #[arg(default_value = ".")]
+    pub path: PathBuf,
+    #[arg(default_value = "lua51")]
+    pub version: LuaVersion,
 }

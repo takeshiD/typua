@@ -1194,9 +1194,12 @@ dependencies = [
  "clap",
  "tokio",
  "tokio-macros",
+ "tracing",
+ "tracing-subscriber",
  "typua-analyzer",
  "typua-config",
  "typua-lsp",
+ "xdg",
 ]
 
 [[package]]
@@ -1216,7 +1219,6 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "typua-ty",
- "xdg",
 ]
 
 [[package]]

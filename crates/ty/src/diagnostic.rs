@@ -12,3 +12,5 @@ pub enum DiagnosticKind {
     TypeMismatch,
     NotDeclaredVariable,
 }
+
+
