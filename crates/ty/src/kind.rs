@@ -1,3 +1,5 @@
+use std::clone;
+
 use crate::{TypuaError, error::OperationError};
 
 #[derive(Debug, Clone, PartialEq)]
@@ -7,7 +9,7 @@ pub enum TypeKind {
     Any,
     Nil,
     Number,
-    Boolean,
+    Boolean(BoolLiteral),
     String,
     Table,
     Function {
@@ -28,6 +30,13 @@ pub enum TypeKind {
     },
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub enum BoolLiteral {
+    True,
+    False,
+    Any,
+}
+
 impl TypeKind {
     /// sub_ty <: sup_ty
     ///   true  => sub_ty is subtype of sup_ty
@@ -44,10 +53,10 @@ impl TypeKind {
                     TypeKind::Number | TypeKind::Any | TypeKind::Unknown
                 )
             }
-            TypeKind::Boolean => {
+            TypeKind::Boolean(_) => {
                 matches!(
                     *sub_ty,
-                    TypeKind::Boolean | TypeKind::Any | TypeKind::Unknown
+                    TypeKind::Boolean(_) | TypeKind::Any | TypeKind::Unknown
                 )
             }
             TypeKind::String => {
@@ -61,21 +70,10 @@ impl TypeKind {
     }
     pub fn try_add(sub_ty: &TypeKind, sup_ty: &TypeKind) -> Result<TypeKind, TypuaError> {
         match sup_ty {
-            TypeKind::Unknown => Err(TypuaError::Operation(OperationError::AddFailed(
-                "unknown".to_string(),
-            ))),
+            TypeKind::Any | TypeKind::Unknown => Ok(TypeKind::Any),
             TypeKind::Never => Err(TypuaError::Operation(OperationError::AddFailed(
                 "never".to_string(),
             ))),
-            TypeKind::Any => {
-                if *sub_ty != TypeKind::Unknown {
-                    Ok(TypeKind::Any)
-                } else {
-                    Err(TypuaError::Operation(OperationError::AddFailed(
-                        "any".to_string(),
-                    )))
-                }
-            }
             TypeKind::Nil => Err(TypuaError::Operation(OperationError::AddFailed(
                 "nil".to_string(),
             ))),
@@ -88,13 +86,53 @@ impl TypeKind {
                     )))
                 }
             }
-            TypeKind::Boolean => Err(TypuaError::Operation(OperationError::AddFailed(
+            TypeKind::Boolean(_) => Err(TypuaError::Operation(OperationError::AddFailed(
                 "boolean".to_string(),
             ))),
             TypeKind::String => Err(TypuaError::Operation(OperationError::AddFailed(
                 "string".to_string(),
             ))),
             _ => unimplemented!(),
+        }
+    }
+    pub fn try_sub(sub_ty: &TypeKind, sup_ty: &TypeKind) -> Result<TypeKind, TypuaError> {
+        match sup_ty {
+            TypeKind::Any | TypeKind::Unknown => Ok(TypeKind::Any),
+            TypeKind::Never => Err(TypuaError::Operation(OperationError::SubFailed(
+                "never".to_string(),
+            ))),
+            TypeKind::Nil => Err(TypuaError::Operation(OperationError::SubFailed(
+                "nil".to_string(),
+            ))),
+            TypeKind::Number => {
+                if *sub_ty == TypeKind::Number {
+                    Ok(TypeKind::Number)
+                } else {
+                    Err(TypuaError::Operation(OperationError::SubFailed(
+                        "number".to_string(),
+                    )))
+                }
+            }
+            TypeKind::Boolean(_) => Err(TypuaError::Operation(OperationError::SubFailed(
+                "boolean".to_string(),
+            ))),
+            TypeKind::String => Err(TypuaError::Operation(OperationError::SubFailed(
+                "string".to_string(),
+            ))),
+            _ => unimplemented!(),
+        }
+    }
+    // `and` returns second argument
+    // `false` and `nil` are treated as `false`
+    pub fn try_and(first_ty: &TypeKind, second_ty: &TypeKind) -> Result<TypeKind, TypuaError> {
+        match first_ty {
+            TypeKind::Nil => Ok(TypeKind::Nil),
+            TypeKind::Boolean(b) => match b {
+                BoolLiteral::True => Ok(second_ty.clone()),
+                BoolLiteral::False => Ok(TypeKind::Boolean(BoolLiteral::False)),
+                BoolLiteral::Any => unimplemented!("BoolLiteral::Any is no assign bool literal.")
+            },
+            _ => Ok(second_ty.clone()),
         }
     }
 }
@@ -107,7 +145,7 @@ impl std::fmt::Display for TypeKind {
             TypeKind::Never => "never".to_string(),
             TypeKind::Nil => "nil".to_string(),
             TypeKind::Number => "number".to_string(),
-            TypeKind::Boolean => "boolean".to_string(),
+            TypeKind::Boolean(_) => "boolean".to_string(),
             TypeKind::String => "string".to_string(),
             TypeKind::Table => "table".to_string(),
             TypeKind::Function { params, returns } => {

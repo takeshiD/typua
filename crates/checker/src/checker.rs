@@ -78,6 +78,32 @@ impl Checker {
                     TypeKind::Unknown
                 }
             },
+            BinOp::Sub(op_span) => match TypeKind::try_sub(&lhs_ty, &rhs_ty) {
+                Ok(ty) => ty,
+                Err(_) => {
+                    let diagnostic = Diagnostic {
+                        span: op_span.clone(),
+                        kind: DiagnosticKind::TypeMismatch,
+                        message: format!("cannot subtract `{}` and `{}`", lhs_ty, rhs_ty),
+                    };
+                    self.diagnostics.push(diagnostic);
+                    TypeKind::Unknown
+                }
+            },
+            BinOp::And(op_span) => {
+                    match TypeKind::try_and(&lhs_ty, &rhs_ty) {
+                    Ok(ty) => ty,
+                    Err(_) => {
+                        let diagnostic = Diagnostic {
+                            span: op_span.clone(),
+                            kind: DiagnosticKind::TypeMismatch,
+                            message: format!("cannot and `{}` and `{}`", lhs_ty, rhs_ty),
+                        };
+                        self.diagnostics.push(diagnostic);
+                        TypeKind::Unknown
+                    }
+                }
+            },
             _ => unimplemented!(),
         }
     }

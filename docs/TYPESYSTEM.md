@@ -473,3 +473,52 @@ $$
   +-----------------------------------------+
 
 ```
+
+# Typecheck level
+## Values and Types
+### Boolean
+## Arithmetic operator
+
+## Bitwise Operator(Lua5.2 or newer and LuaJIT)
+
+## Relational Operator
+
+## Control Structure
+### if statement
+- `false` and `nil` are treated as `false`
+- all values different from `false` and `nil` are treated as `true`
+
+# Edge Cases
+## Behavior about only annotation bool and logic operator `and` `or`
+`and`と`or`は短絡評価のため
+```lua
+a and b => a がfalsy(nil / false)の場合a, truthy(nil/false以外)の場合はbを返す
+a or b => a がfalsy(nil / false)の場合b, truthy(nil/false以外)の場合はaを返す
+```
+
+`and`と`or`演算子の型検査を行なう場合次のケースが発生する
+```lua
+---@type boolean
+local x
+local y = x and 12
+```
+つまりxは宣言されているがassignされておらず、型宣言だけされており、その状態でyの評価に利用するケースである。
+
+lua-lsの場合は次のようになる(inlay hint likeに表示を付加した)
+```lua
+---@type boolean
+local x: boolean
+local y: integer|false = x and 12
+```
+
+この場合次の考え方があるだろう
+
+1. xはassignされていないので、nilがassignされていると相当しているとみなす
+つまりand
+```lua
+---@type boolean
+local x: boolean
+local y: nil = x and 12
+```
+2. xはassignされているが、仮の
+

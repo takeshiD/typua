@@ -47,6 +47,8 @@ pub enum BindError {
 
 #[derive(Debug, Error)]
 pub enum OperationError {
-    #[error("Add operation failed")]
+    #[error("Add failed")]
     AddFailed(String),
+    #[error("Subtract failed")]
+    SubFailed(String),
 }
