@@ -1,5 +1,5 @@
-use typua_ty::TypeKind;
 use typua_span::{Position, Span};
+use typua_ty::{BoolLiteral, TypeKind};
 
 use nom::sequence::terminated;
 use nom::{
@@ -68,7 +68,7 @@ fn parse_type(i: AnnotationSpan) -> IResult<AnnotationSpan, AnnotationInfo> {
 fn parse_basictype(start_span: AnnotationSpan) -> IResult<AnnotationSpan, AnnotationInfo> {
     let (end_span, ty) = alt((
         map(ws(tag("number")), |_| TypeKind::Number),
-        map(ws(tag("boolean")), |_| TypeKind::Boolean),
+        map(ws(tag("boolean")), |_| TypeKind::Boolean(BoolLiteral::Any)),
         map(ws(tag("string")), |_| TypeKind::String),
         map(ws(tag("nil")), |_| TypeKind::Nil),
         map(ws(tag("any")), |_| TypeKind::Any),
@@ -400,7 +400,7 @@ mod parse_annotation_normal {
             AnnotationInfo {
                 tag: AnnotationTag::Type(TypeKind::Dict {
                     key: Box::new(TypeKind::String),
-                    val: Box::new(TypeKind::Boolean),
+                    val: Box::new(TypeKind::Boolean(BoolLiteral::Any)),
                 }),
                 span: Span {
                     start: Position::new(1, 10),

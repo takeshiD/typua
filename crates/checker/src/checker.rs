@@ -1,6 +1,7 @@
 use typua_binder::{Symbol, TypeEnv};
 use typua_parser::ast::{BinOp, Block, Expression, Stmt, TypeAst, Var};
 use typua_ty::{
+    BoolLiteral,
     diagnostic::{Diagnostic, DiagnosticKind},
     kind::TypeKind,
 };
@@ -54,7 +55,11 @@ impl Checker {
     fn eval_expr(&mut self, expr: &Expression) -> TypeKind {
         match expr {
             Expression::Number { .. } => TypeKind::Number,
-            Expression::Boolean { .. } => TypeKind::Boolean,
+            Expression::Boolean { val, .. } => match val.as_str() {
+                "false" => TypeKind::Boolean(BoolLiteral::False),
+                "true" => TypeKind::Boolean(BoolLiteral::True),
+                _ => unimplemented!("invalid bool literal"),
+            },
             Expression::Nil { .. } => TypeKind::Nil,
             Expression::String { .. } => TypeKind::String,
             Expression::BinaryOperator { lhs, binop, rhs } => self.eval_binop(binop, lhs, rhs),
@@ -90,18 +95,28 @@ impl Checker {
                     TypeKind::Unknown
                 }
             },
-            BinOp::And(op_span) => {
-                    match TypeKind::try_and(&lhs_ty, &rhs_ty) {
-                    Ok(ty) => ty,
-                    Err(_) => {
-                        let diagnostic = Diagnostic {
-                            span: op_span.clone(),
-                            kind: DiagnosticKind::TypeMismatch,
-                            message: format!("cannot and `{}` and `{}`", lhs_ty, rhs_ty),
-                        };
-                        self.diagnostics.push(diagnostic);
-                        TypeKind::Unknown
-                    }
+            BinOp::And(op_span) => match TypeKind::try_and(&lhs_ty, &rhs_ty) {
+                Ok(ty) => ty,
+                Err(_) => {
+                    let diagnostic = Diagnostic {
+                        span: op_span.clone(),
+                        kind: DiagnosticKind::TypeMismatch,
+                        message: format!("cannot and `{}` and `{}`", lhs_ty, rhs_ty),
+                    };
+                    self.diagnostics.push(diagnostic);
+                    TypeKind::Unknown
+                }
+            },
+            BinOp::Or(op_span) => match TypeKind::try_or(&lhs_ty, &rhs_ty) {
+                Ok(ty) => ty,
+                Err(_) => {
+                    let diagnostic = Diagnostic {
+                        span: op_span.clone(),
+                        kind: DiagnosticKind::TypeMismatch,
+                        message: format!("cannot and `{}` and `{}`", lhs_ty, rhs_ty),
+                    };
+                    self.diagnostics.push(diagnostic);
+                    TypeKind::Unknown
                 }
             },
             _ => unimplemented!(),
@@ -129,7 +144,7 @@ mod tests {
     use pretty_assertions::assert_eq;
     use typua_span::{Position, Span};
     #[test]
-    fn eval_expr_literal() {
+    fn eval_literal() {
         let env = TypeEnv::new();
         let mut checker = Checker::new(env);
         let expr = Expression::Number {
@@ -137,30 +152,33 @@ mod tests {
                 start: Position::new(0, 0),
                 end: Position::new(0, 0),
             },
+            val: "12".to_string(),
         };
         let ty = checker.eval_expr(&expr);
         assert_eq!(ty, TypeKind::Number);
         assert_eq!(checker.diagnostics.is_empty(), true);
     }
     #[test]
-    fn eval_expr_binop() {
+    fn eval_binop_add() {
         // Normal Test: number + number
         let env = TypeEnv::new();
         let mut checker = Checker::new(env);
         let expr = Expression::BinaryOperator {
+            binop: BinOp::Add(Span::new(Position::new(0, 0), Position::new(0, 0))),
             lhs: Box::new(Expression::Number {
                 span: Span {
                     start: Position::new(0, 0),
                     end: Position::new(0, 0),
                 },
+                val: "12".to_string(),
             }),
             rhs: Box::new(Expression::Number {
                 span: Span {
                     start: Position::new(0, 0),
                     end: Position::new(0, 10),
                 },
+                val: "12".to_string(),
             }),
-            binop: BinOp::Add(Span::new(Position::new(0, 0), Position::new(0, 0))),
         };
         let ty = checker.eval_expr(&expr);
         assert_eq!(ty, TypeKind::Number);
@@ -176,6 +194,7 @@ mod tests {
                     start: Position::new(0, 0),
                     end: Position::new(0, 6),
                 },
+                val: "false".to_string(),
             }),
             binop: BinOp::Add(Span::new(Position::new(0, 7), Position::new(0, 8))),
             rhs: Box::new(Expression::Number {
@@ -183,6 +202,7 @@ mod tests {
                     start: Position::new(0, 9),
                     end: Position::new(0, 11),
                 },
+                val: "12".to_string(),
             }),
         };
         let ty = checker.eval_expr(&expr);
@@ -225,48 +245,341 @@ mod tests {
         let ty = checker.eval_expr(&expr);
         assert_eq!(ty, TypeKind::Number);
         assert_eq!(checker.diagnostics.is_empty(), true);
-
-        // TypeMismatch: binop vars
-        // (e.g)
-        // local x = 12
-        // local y = false
-        // x + y
-        let mut env = TypeEnv::new();
-        let _ = env.insert(&Symbol::new("x".to_string()), &TypeKind::Number);
-        let _ = env.insert(&Symbol::new("y".to_string()), &TypeKind::Boolean);
+    }
+    #[test]
+    fn eval_binop_or() {
+        // NormalTest: true or 12 => true
+        let env = TypeEnv::new();
         let mut checker = Checker::new(env);
         let expr = Expression::BinaryOperator {
+            binop: BinOp::Or(Span::new(Position::new(0, 0), Position::new(0, 0))),
+            lhs: Box::new(Expression::Boolean {
+                span: Span {
+                    start: Position::new(0, 0),
+                    end: Position::new(0, 0),
+                },
+                val: "true".to_string(),
+            }),
+            rhs: Box::new(Expression::Number {
+                span: Span {
+                    start: Position::new(0, 0),
+                    end: Position::new(0, 10),
+                },
+                val: "12".to_string(),
+            }),
+        };
+        let ty = checker.eval_expr(&expr);
+        assert_eq!(ty, TypeKind::Boolean(BoolLiteral::True));
+        assert_eq!(checker.diagnostics.is_empty(), true);
+
+        // NormalTest: "hello" or 12 => string
+        let env = TypeEnv::new();
+        let mut checker = Checker::new(env);
+        let expr = Expression::BinaryOperator {
+            binop: BinOp::Or(Span::new(Position::new(0, 0), Position::new(0, 0))),
+            lhs: Box::new(Expression::String {
+                span: Span {
+                    start: Position::new(0, 0),
+                    end: Position::new(0, 0),
+                },
+                val: "hello".to_string(),
+            }),
+            rhs: Box::new(Expression::Number {
+                span: Span {
+                    start: Position::new(0, 0),
+                    end: Position::new(0, 10),
+                },
+                val: "12".to_string(),
+            }),
+        };
+        let ty = checker.eval_expr(&expr);
+        assert_eq!(ty, TypeKind::String);
+        assert_eq!(checker.diagnostics.is_empty(), true);
+
+        // NormalTest: false or 12 => number
+        let env = TypeEnv::new();
+        let mut checker = Checker::new(env);
+        let expr = Expression::BinaryOperator {
+            binop: BinOp::Or(Span::new(Position::new(0, 7), Position::new(0, 8))),
+            lhs: Box::new(Expression::Boolean {
+                span: Span {
+                    start: Position::new(0, 0),
+                    end: Position::new(0, 6),
+                },
+                val: "false".to_string(),
+            }),
+            rhs: Box::new(Expression::Number {
+                span: Span {
+                    start: Position::new(0, 9),
+                    end: Position::new(0, 11),
+                },
+                val: "12".to_string(),
+            }),
+        };
+        let ty = checker.eval_expr(&expr);
+        assert_eq!(ty, TypeKind::Number);
+        assert_eq!(checker.diagnostics.is_empty(), true);
+
+        // NormalTest: nil or 12 => number
+        let env = TypeEnv::new();
+        let mut checker = Checker::new(env);
+        let expr = Expression::BinaryOperator {
+            binop: BinOp::Or(Span::new(Position::new(0, 7), Position::new(0, 8))),
+            lhs: Box::new(Expression::Nil {
+                span: Span {
+                    start: Position::new(0, 0),
+                    end: Position::new(0, 6),
+                },
+            }),
+            rhs: Box::new(Expression::Number {
+                span: Span {
+                    start: Position::new(0, 9),
+                    end: Position::new(0, 11),
+                },
+                val: "12".to_string(),
+            }),
+        };
+        let ty = checker.eval_expr(&expr);
+        assert_eq!(ty, TypeKind::Number);
+        assert_eq!(checker.diagnostics.is_empty(), true);
+
+        // NormalTest: x and 12 => number|true
+        let mut env = TypeEnv::new();
+        let _ = env.insert(
+            &Symbol::new("x".to_string()),
+            &TypeKind::Boolean(BoolLiteral::Any),
+        );
+        let _ = env.insert(&Symbol::new("y".to_string()), &TypeKind::Number);
+        let mut checker = Checker::new(env);
+        let expr = Expression::BinaryOperator {
+            binop: BinOp::Or(Span::new(Position::new(0, 0), Position::new(0, 0))),
             lhs: Box::new(Expression::Var {
                 var: Var {
                     span: Span {
-                        start: Position::new(2, 0),
-                        end: Position::new(2, 1),
+                        start: Position::new(0, 0),
+                        end: Position::new(0, 0),
                     },
                     symbol: "x".to_string(),
                 },
             }),
-            binop: BinOp::Add(Span::new(Position::new(2, 2), Position::new(2, 3))),
             rhs: Box::new(Expression::Var {
                 var: Var {
                     span: Span {
-                        start: Position::new(2, 4),
-                        end: Position::new(2, 5),
+                        start: Position::new(0, 0),
+                        end: Position::new(0, 10),
                     },
                     symbol: "y".to_string(),
                 },
             }),
         };
         let ty = checker.eval_expr(&expr);
-        assert_eq!(ty, TypeKind::Unknown);
-        assert_eq!(checker.diagnostics.len(), 1);
         assert_eq!(
-            checker.diagnostics[0],
-            Diagnostic {
-                message: "cannot add `number` and `boolean`".to_string(),
-                kind: DiagnosticKind::TypeMismatch,
-                span: Span::new(Position::new(2, 2), Position::new(2, 3))
-            }
+            ty,
+            TypeKind::Union(vec![TypeKind::Number, TypeKind::Boolean(BoolLiteral::True)])
         );
+        assert_eq!(checker.diagnostics.is_empty(), true);
+    }
+    #[test]
+    fn eval_binop_and() {
+        // NormalTest: true and 12 => 12
+        let env = TypeEnv::new();
+        let mut checker = Checker::new(env);
+        let expr = Expression::BinaryOperator {
+            binop: BinOp::And(Span::new(Position::new(0, 0), Position::new(0, 0))),
+            lhs: Box::new(Expression::Boolean {
+                span: Span {
+                    start: Position::new(0, 0),
+                    end: Position::new(0, 0),
+                },
+                val: "true".to_string(),
+            }),
+            rhs: Box::new(Expression::Number {
+                span: Span {
+                    start: Position::new(0, 0),
+                    end: Position::new(0, 10),
+                },
+                val: "12".to_string(),
+            }),
+        };
+        let ty = checker.eval_expr(&expr);
+        assert_eq!(ty, TypeKind::Number);
+        assert_eq!(checker.diagnostics.is_empty(), true);
+
+        // NormalTest: "hello" and 12 => 12
+        let env = TypeEnv::new();
+        let mut checker = Checker::new(env);
+        let expr = Expression::BinaryOperator {
+            binop: BinOp::And(Span::new(Position::new(0, 0), Position::new(0, 0))),
+            lhs: Box::new(Expression::String {
+                span: Span {
+                    start: Position::new(0, 0),
+                    end: Position::new(0, 0),
+                },
+                val: "hello".to_string(),
+            }),
+            rhs: Box::new(Expression::Number {
+                span: Span {
+                    start: Position::new(0, 0),
+                    end: Position::new(0, 10),
+                },
+                val: "12".to_string(),
+            }),
+        };
+        let ty = checker.eval_expr(&expr);
+        assert_eq!(ty, TypeKind::Number);
+        assert_eq!(checker.diagnostics.is_empty(), true);
+
+        // NormalTest: false and 12 => false
+        let env = TypeEnv::new();
+        let mut checker = Checker::new(env);
+        let expr = Expression::BinaryOperator {
+            binop: BinOp::And(Span::new(Position::new(0, 7), Position::new(0, 8))),
+            lhs: Box::new(Expression::Boolean {
+                span: Span {
+                    start: Position::new(0, 0),
+                    end: Position::new(0, 6),
+                },
+                val: "false".to_string(),
+            }),
+            rhs: Box::new(Expression::Number {
+                span: Span {
+                    start: Position::new(0, 9),
+                    end: Position::new(0, 11),
+                },
+                val: "12".to_string(),
+            }),
+        };
+        let ty = checker.eval_expr(&expr);
+        assert_eq!(ty, TypeKind::Boolean(BoolLiteral::False));
+        assert_eq!(checker.diagnostics.is_empty(), true);
+
+        // NormalTest: nil and 12 => nil
+        let env = TypeEnv::new();
+        let mut checker = Checker::new(env);
+        let expr = Expression::BinaryOperator {
+            binop: BinOp::And(Span::new(Position::new(0, 7), Position::new(0, 8))),
+            lhs: Box::new(Expression::Nil {
+                span: Span {
+                    start: Position::new(0, 0),
+                    end: Position::new(0, 6),
+                },
+            }),
+            rhs: Box::new(Expression::Number {
+                span: Span {
+                    start: Position::new(0, 9),
+                    end: Position::new(0, 11),
+                },
+                val: "12".to_string(),
+            }),
+        };
+        let ty = checker.eval_expr(&expr);
+        assert_eq!(ty, TypeKind::Nil);
+        assert_eq!(checker.diagnostics.is_empty(), true);
+
+        // NormalTest: x = false, y = 12, x and y => false
+        let mut env = TypeEnv::new();
+        let _ = env.insert(
+            &Symbol::new("x".to_string()),
+            &TypeKind::Boolean(BoolLiteral::False),
+        );
+        let _ = env.insert(&Symbol::new("y".to_string()), &TypeKind::Number);
+        let mut checker = Checker::new(env);
+        let expr = Expression::BinaryOperator {
+            binop: BinOp::And(Span::new(Position::new(0, 0), Position::new(0, 0))),
+            lhs: Box::new(Expression::Var {
+                var: Var {
+                    span: Span {
+                        start: Position::new(0, 0),
+                        end: Position::new(0, 0),
+                    },
+                    symbol: "x".to_string(),
+                },
+            }),
+            rhs: Box::new(Expression::Var {
+                var: Var {
+                    span: Span {
+                        start: Position::new(0, 0),
+                        end: Position::new(0, 10),
+                    },
+                    symbol: "y".to_string(),
+                },
+            }),
+        };
+        let ty = checker.eval_expr(&expr);
+        assert_eq!(ty, TypeKind::Boolean(BoolLiteral::False));
+        assert_eq!(checker.diagnostics.is_empty(), true);
+
+        // NormalTest: x = true, y = 12, x and y => number
+        let mut env = TypeEnv::new();
+        let _ = env.insert(
+            &Symbol::new("x".to_string()),
+            &TypeKind::Boolean(BoolLiteral::True),
+        );
+        let _ = env.insert(&Symbol::new("y".to_string()), &TypeKind::Number);
+        let mut checker = Checker::new(env);
+        let expr = Expression::BinaryOperator {
+            binop: BinOp::And(Span::new(Position::new(0, 0), Position::new(0, 0))),
+            lhs: Box::new(Expression::Var {
+                var: Var {
+                    span: Span {
+                        start: Position::new(0, 0),
+                        end: Position::new(0, 0),
+                    },
+                    symbol: "x".to_string(),
+                },
+            }),
+            rhs: Box::new(Expression::Var {
+                var: Var {
+                    span: Span {
+                        start: Position::new(0, 0),
+                        end: Position::new(0, 10),
+                    },
+                    symbol: "y".to_string(),
+                },
+            }),
+        };
+        let ty = checker.eval_expr(&expr);
+        assert_eq!(ty, TypeKind::Number,);
+        assert_eq!(checker.diagnostics.is_empty(), true);
+
+        // NormalTest: x is nil but only annotated, x and 12 => number|false
+        let mut env = TypeEnv::new();
+        let _ = env.insert(
+            &Symbol::new("x".to_string()),
+            &TypeKind::Boolean(BoolLiteral::Any),
+        );
+        let _ = env.insert(&Symbol::new("y".to_string()), &TypeKind::Number);
+        let mut checker = Checker::new(env);
+        let expr = Expression::BinaryOperator {
+            binop: BinOp::And(Span::new(Position::new(0, 0), Position::new(0, 0))),
+            lhs: Box::new(Expression::Var {
+                var: Var {
+                    span: Span {
+                        start: Position::new(0, 0),
+                        end: Position::new(0, 0),
+                    },
+                    symbol: "x".to_string(),
+                },
+            }),
+            rhs: Box::new(Expression::Var {
+                var: Var {
+                    span: Span {
+                        start: Position::new(0, 0),
+                        end: Position::new(0, 10),
+                    },
+                    symbol: "y".to_string(),
+                },
+            }),
+        };
+        let ty = checker.eval_expr(&expr);
+        assert_eq!(
+            ty,
+            TypeKind::Union(vec![
+                TypeKind::Number,
+                TypeKind::Boolean(BoolLiteral::False)
+            ])
+        );
+        assert_eq!(checker.diagnostics.is_empty(), true);
     }
     #[test]
     fn eval_expr_var() {
@@ -307,6 +620,50 @@ mod tests {
                 kind: DiagnosticKind::NotDeclaredVariable,
                 span: Span::new(Position::new(1, 0), Position::new(1, 1))
             }
-        )
+        );
+        // TypeMismatch: binop vars
+        // (e.g)
+        // local x = 12
+        // local y = false
+        // x + y
+        let mut env = TypeEnv::new();
+        let _ = env.insert(&Symbol::new("x".to_string()), &TypeKind::Number);
+        let _ = env.insert(
+            &Symbol::new("y".to_string()),
+            &TypeKind::Boolean(BoolLiteral::False),
+        );
+        let mut checker = Checker::new(env);
+        let expr = Expression::BinaryOperator {
+            lhs: Box::new(Expression::Var {
+                var: Var {
+                    span: Span {
+                        start: Position::new(2, 0),
+                        end: Position::new(2, 1),
+                    },
+                    symbol: "x".to_string(),
+                },
+            }),
+            binop: BinOp::Add(Span::new(Position::new(2, 2), Position::new(2, 3))),
+            rhs: Box::new(Expression::Var {
+                var: Var {
+                    span: Span {
+                        start: Position::new(2, 4),
+                        end: Position::new(2, 5),
+                    },
+                    symbol: "y".to_string(),
+                },
+            }),
+        };
+        let ty = checker.eval_expr(&expr);
+        assert_eq!(ty, TypeKind::Unknown);
+        assert_eq!(checker.diagnostics.len(), 1);
+        assert_eq!(
+            checker.diagnostics[0],
+            Diagnostic {
+                message: "cannot add `number` and `boolean`".to_string(),
+                kind: DiagnosticKind::TypeMismatch,
+                span: Span::new(Position::new(2, 2), Position::new(2, 3))
+            }
+        );
     }
 }

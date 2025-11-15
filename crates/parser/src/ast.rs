@@ -84,12 +84,15 @@ pub struct Label {}
 pub enum Expression {
     Number {
         span: Span,
+        val: String,
     },
     String {
         span: Span,
+        val: String,
     },
     Boolean {
         span: Span,
+        val: String,
     },
     Nil {
         span: Span,
@@ -172,7 +175,7 @@ impl From<full_moon::ast::Block> for Block {
 impl From<full_moon::ast::Stmt> for Stmt {
     fn from(stmt: full_moon::ast::Stmt) -> Self {
         match stmt {
-            full_moon::ast::Stmt::Assignment(assign) => unimplemented!(),
+            full_moon::ast::Stmt::Assignment(_assign) => unimplemented!(),
             full_moon::ast::Stmt::LocalAssignment(local_assign) => {
                 let leading_tribia = local_assign.local_token().leading_trivia();
                 let ann_content = concat_tokens(leading_tribia);
@@ -214,12 +217,14 @@ impl From<full_moon::ast::Expression> for Expression {
                     start: Position::from(tkn.start_position()),
                     end: Position::from(tkn.end_position()),
                 },
+                val: tkn.token().to_string()
             },
             full_moon::ast::Expression::String(tkn) => Expression::String {
                 span: Span {
                     start: Position::from(tkn.start_position()),
                     end: Position::from(tkn.end_position()),
                 },
+                val: tkn.token().to_string()
             },
             full_moon::ast::Expression::Symbol(tkn) => match tkn.token_type() {
                 full_moon::tokenizer::TokenType::Symbol { symbol } => match symbol {
@@ -228,6 +233,7 @@ impl From<full_moon::ast::Expression> for Expression {
                             start: Position::from(tkn.start_position()),
                             end: Position::from(tkn.end_position()),
                         },
+                        val: tkn.token().to_string()
                     },
                     full_moon::tokenizer::Symbol::Nil => Expression::Nil {
                         span: Span {
@@ -240,6 +246,7 @@ impl From<full_moon::ast::Expression> for Expression {
                             start: Position::from(tkn.start_position()),
                             end: Position::from(tkn.end_position()),
                         },
+                        val: tkn.token().to_string()
                     },
                     _ => unimplemented!(),
                 },

@@ -47,7 +47,8 @@ mod tests {
                     span: Span {
                         start: Position::new(1, 11),
                         end: Position::new(1, 13),
-                    }
+                    },
+                    val: "12".to_string(),
                 }],
                 annotates: Vec::new(),
             })]
@@ -73,7 +74,8 @@ mod tests {
                     span: Span {
                         start: Position::new(2, 11),
                         end: Position::new(2, 13),
-                    }
+                    },
+                    val: "12".to_string(),
                 }],
                 annotates: vec![AnnotationInfo {
                     tag: AnnotationTag::Type(TypeKind::Number),

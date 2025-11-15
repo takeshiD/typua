@@ -1,5 +1,3 @@
-use std::clone;
-
 use crate::{TypuaError, error::OperationError};
 
 #[derive(Debug, Clone, PartialEq)]
@@ -122,7 +120,6 @@ impl TypeKind {
             _ => unimplemented!(),
         }
     }
-    // `and` returns second argument
     // `false` and `nil` are treated as `false`
     pub fn try_and(first_ty: &TypeKind, second_ty: &TypeKind) -> Result<TypeKind, TypuaError> {
         match first_ty {
@@ -130,9 +127,27 @@ impl TypeKind {
             TypeKind::Boolean(b) => match b {
                 BoolLiteral::True => Ok(second_ty.clone()),
                 BoolLiteral::False => Ok(TypeKind::Boolean(BoolLiteral::False)),
-                BoolLiteral::Any => unimplemented!("BoolLiteral::Any is no assign bool literal.")
+                BoolLiteral::Any => Ok(TypeKind::Union(vec![
+                    second_ty.clone(),
+                    TypeKind::Boolean(BoolLiteral::False),
+                ])),
             },
             _ => Ok(second_ty.clone()),
+        }
+    }
+    // `false` and `nil` are treated as `false`
+    pub fn try_or(first_ty: &TypeKind, second_ty: &TypeKind) -> Result<TypeKind, TypuaError> {
+        match first_ty {
+            TypeKind::Nil => Ok(second_ty.clone()),
+            TypeKind::Boolean(b) => match b {
+                BoolLiteral::True => Ok(TypeKind::Boolean(BoolLiteral::True)),
+                BoolLiteral::False => Ok(second_ty.clone()),
+                BoolLiteral::Any => Ok(TypeKind::Union(vec![
+                    second_ty.clone(),
+                    TypeKind::Boolean(BoolLiteral::True),
+                ])),
+            },
+            _ => Ok(first_ty.clone()),
         }
     }
 }
