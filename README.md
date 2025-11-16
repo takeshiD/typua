@@ -13,20 +13,32 @@ Compatibled type-annotation syntax [lua-language-server](https://github.com/lual
 
 ## Status
 - **Type declaration**
-    - [x] builtin-type(nil, number, string, boolean, function, table)
-    - [x] compound-type(union, array, tuple, dictionary, key-value table)
-    - [x] class
-    - [x] enum
+    - [ ] builtin-type
+        - [x] nil
+        - [x] number
+        - [ ] integer(lua52 up to)
+        - [x] string
+        - [x] boolean
+        - [ ] function
+        - [ ] table
+    - [x] compound-type
+        - [x] union
+        - [x] array
+        - [x] tuple
+        - [x] dictionary
+        - [x] key-value table
+    - [ ] class
+    - [ ] enum
     - [ ] alias
     - [ ] cast
     - [ ] type coercion(as)
-    - [x] generic function
+    - [ ] generic function
     - [ ] generic class and method
 - **Type check**
     - [x] assign-type-mismatch
-    - [x] return-type-mismatch
-    - [x] param-type-mismatch
-    - [x] field-type-mismatch
+    - [ ] return-type-mismatch
+    - [ ] param-type-mismatch
+    - [ ] field-type-mismatch
     - [ ] table-shape-mismatch
 - **Suppert Lua Version**
     - [x] Lua51
@@ -40,7 +52,7 @@ Compatibled type-annotation syntax [lua-language-server](https://github.com/lual
         - [ ] Incremental Analysis of only the changed parts
 - **LSP Support**
     - [x] Diagnostics
-    - [x] Inlay hints
+    - [ ] Inlay hints
     - [ ] Hover
     - [ ] References
     - [ ] Goto Type Defenition
@@ -60,7 +72,7 @@ cargo install typua
 ```lua
 vim.lsp.enable("typua")
 vim.lsp.config("typua", {
-    cmd = { "typua", "lsp" },
+    cmd = { "typua", "serve" },
     filetypes = { "lua" },
     root_markers = { ".git", ".typua.toml" },
     settings = {
