@@ -9,7 +9,6 @@ use crate::typeenv::TypeEnv;
 #[derive(Debug, Clone, Default)]
 pub struct Binder {
     pub type_env: TypeEnv,
-    // flowgraph: FlowGraph,
 }
 
 impl Binder {
