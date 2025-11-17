@@ -80,8 +80,8 @@ impl From<Span> for LspRange {
 impl From<LspPosition> for Position {
     fn from(position: LspPosition) -> Self {
         Self {
-            line: position.line,
-            character: position.character,
+            line: position.line + 1,
+            character: position.character + 1,
         }
     }
 }
@@ -89,8 +89,8 @@ impl From<LspPosition> for Position {
 impl From<Position> for LspPosition {
     fn from(position: Position) -> Self {
         Self {
-            line: position.line,
-            character: position.character,
+            line: position.line - 1,
+            character: position.character - 1,
         }
     }
 }

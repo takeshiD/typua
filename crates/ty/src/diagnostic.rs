@@ -21,7 +21,7 @@ impl From<Diagnostic> for tower_lsp::lsp_types::Diagnostic {
             severity: None,
             code: None,
             code_description: None,
-            source: None,
+            source: Some("typua".to_string()),
             message: diag.message.clone(),
             related_information: None,
             tags: None,

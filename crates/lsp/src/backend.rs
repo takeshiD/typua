@@ -5,7 +5,7 @@ use tower_lsp::lsp_types::{
     TextDocumentSyncCapability, TextDocumentSyncKind,
 };
 use tower_lsp::{Client, LanguageServer};
-use tracing::info;
+use tracing::{debug, info};
 use typua_analyzer::Analyzer;
 use typua_config::LuaVersion;
 
@@ -66,6 +66,12 @@ impl LanguageServer for Backend {
                 d
             })
             .collect();
+        for d in diag.iter() {
+            debug!(
+                "(line:{}, col:{}) {}",
+                d.range.start.line, d.range.start.character, d.message
+            );
+        }
         self.client.publish_diagnostics(uri, diag, None).await
     }
     async fn did_close(&self, params: DidCloseTextDocumentParams) {
