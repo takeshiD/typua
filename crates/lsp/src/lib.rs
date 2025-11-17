@@ -6,7 +6,7 @@ use typua_ty::error::TypuaError;
 
 async fn run_lsp_service() {
     let (stdin, stdout) = (tokio::io::stdin(), tokio::io::stdout());
-    let (service, socket) = LspService::new(|client| Backend { client });
+    let (service, socket) = LspService::new(Backend::new);
     Server::new(stdin, stdout, socket).serve(service).await;
 }
 

@@ -11,3 +11,4 @@ path = "src/lib.rs"
 typua-span.workspace = true
 thiserror.workspace = true
 full_moon.workspace = true
+tower-lsp.workspace = true

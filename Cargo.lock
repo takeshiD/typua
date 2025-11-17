@@ -1219,6 +1219,9 @@ dependencies = [
  "tower-lsp",
  "tracing",
  "tracing-subscriber",
+ "typua-analyzer",
+ "typua-config",
+ "typua-span",
  "typua-ty",
 ]
 
@@ -1243,6 +1246,7 @@ name = "typua-span"
 version = "0.1.3"
 dependencies = [
  "full_moon",
+ "tower-lsp",
 ]
 
 [[package]]
@@ -1251,6 +1255,7 @@ version = "0.1.0"
 dependencies = [
  "full_moon",
  "thiserror",
+ "tower-lsp",
  "typua-span",
 ]
 

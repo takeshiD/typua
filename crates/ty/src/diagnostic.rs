@@ -13,4 +13,19 @@ pub enum DiagnosticKind {
     NotDeclaredVariable,
 }
 
-
+impl From<Diagnostic> for tower_lsp::lsp_types::Diagnostic {
+    fn from(diag: Diagnostic) -> Self {
+        let range = diag.span.clone().into();
+        Self {
+            range,
+            severity: None,
+            code: None,
+            code_description: None,
+            source: None,
+            message: diag.message.clone(),
+            related_information: None,
+            tags: None,
+            data: None,
+        }
+    }
+}

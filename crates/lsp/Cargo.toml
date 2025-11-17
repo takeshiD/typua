@@ -9,11 +9,14 @@ path = "src/lib.rs"
 
 [dependencies]
 # internal
+typua-span.workspace = true
 typua-ty.workspace = true
+typua-analyzer.workspace = true
+typua-config.workspace = true
 
 # external
 anyhow.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
 tokio.workspace = true
-tower-lsp = "0.20"
+tower-lsp.workspace = true

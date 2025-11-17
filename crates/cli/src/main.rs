@@ -57,7 +57,11 @@ fn main() -> anyhow::Result<()> {
             let mut content = String::new();
             f.read_to_string(&mut content)?;
             let analyzer = Analyzer::new();
-            analyzer.analyze(&content, &version)?
+            let result = analyzer.analyze("", &content, &version);
+            println!("Analyze Report");
+            for d in result.diagnotics.iter() {
+                println!("Diagnostic line:{} col:{}", d.span.start.line(), d.span.start.character());
+            }
         }
     }
 

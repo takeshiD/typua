@@ -25,6 +25,7 @@ impl Checker {
         self.typecheck_block(&ast.block);
         CheckResult {
             diagnostics: self.diagnostics,
+            type_env: self.env,
         }
     }
     fn typecheck_block(&mut self, block: &Block) {
