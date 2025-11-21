@@ -488,8 +488,7 @@ $$
 - `false` and `nil` are treated as `false`
 - all values different from `false` and `nil` are treated as `true`
 
-# Edge Cases
-## Behavior about only annotation bool and logic operator `and` `or`
+# Behavior about only annotation bool and logic operator `and` `or`
 `and`と`or`は短絡評価のため
 ```lua
 a and b => a がfalsy(nil / false)の場合a, truthy(nil/false以外)の場合はbを返す
@@ -522,3 +521,12 @@ local y: nil = x and 12
 ```
 2. xはassignされているが、仮の
 
+# Annonymous Function
+```lua
+---@param x number
+---@param y number
+---@return number
+local x = function(x, y)
+    return x + y
+end
+```

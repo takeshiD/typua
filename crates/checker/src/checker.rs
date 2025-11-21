@@ -1,5 +1,5 @@
 use typua_binder::{Symbol, TypeEnv};
-use typua_parser::ast::{BinOp, Block, Expression, Stmt, TypeAst, Var, Variable};
+use typua_parser::ast::{BinOp, Block, Expression, Param, Stmt, TypeAst, Var, Variable};
 use typua_ty::{
     BoolLiteral,
     diagnostic::{Diagnostic, DiagnosticKind},
@@ -54,6 +54,7 @@ impl Checker {
                     }
                 }
             }
+            Stmt::LocalFunction(_local_func) => unimplemented!(),
             _ => unimplemented!(),
         }
     }
@@ -107,7 +108,7 @@ impl Checker {
                         span: var.span.clone(),
                     });
                     ty
-                },
+                }
                 Err(_) => {
                     let diagnostic = Diagnostic {
                         span: op_span.clone(),

@@ -1,8 +1,5 @@
-use std::collections::BTreeMap;
-
 use crate::annotation::{AnnotationInfo, concat_tokens, parse_annotation};
 use typua_span::{Position, Span};
-use typua_ty::TypeKind;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct TypeAst {
@@ -107,13 +104,19 @@ pub enum Expression {
         expr: Box<Expression>,
     },
     Function {
-        params: BTreeMap<String, TypeKind>,
-        returns: Vec<TypeKind>,
+        params: Vec<Param>,
+        body: Block,
     },
     FunctionCall(FunctionCall),
     Var {
         var: Var,
     },
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Param {
+    pub span: Span,
+    pub name: String,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -203,7 +206,6 @@ impl From<full_moon::ast::Stmt> for Stmt {
                 })
             }
             // full_moon::ast::Stmt::FunctionDeclaration(func_dec) => unimplemented!(),
-            // full_moon::ast::Stmt::LocalFunction(local_func) => unimplemented!(),
             _ => unimplemented!(),
         }
     }
@@ -217,14 +219,14 @@ impl From<full_moon::ast::Expression> for Expression {
                     start: Position::from(tkn.start_position()),
                     end: Position::from(tkn.end_position()),
                 },
-                val: tkn.token().to_string()
+                val: tkn.token().to_string(),
             },
             full_moon::ast::Expression::String(tkn) => Expression::String {
                 span: Span {
                     start: Position::from(tkn.start_position()),
                     end: Position::from(tkn.end_position()),
                 },
-                val: tkn.token().to_string()
+                val: tkn.token().to_string(),
             },
             full_moon::ast::Expression::Symbol(tkn) => match tkn.token_type() {
                 full_moon::tokenizer::TokenType::Symbol { symbol } => match symbol {
@@ -233,7 +235,7 @@ impl From<full_moon::ast::Expression> for Expression {
                             start: Position::from(tkn.start_position()),
                             end: Position::from(tkn.end_position()),
                         },
-                        val: tkn.token().to_string()
+                        val: tkn.token().to_string(),
                     },
                     full_moon::tokenizer::Symbol::Nil => Expression::Nil {
                         span: Span {
@@ -246,7 +248,7 @@ impl From<full_moon::ast::Expression> for Expression {
                             start: Position::from(tkn.start_position()),
                             end: Position::from(tkn.end_position()),
                         },
-                        val: tkn.token().to_string()
+                        val: tkn.token().to_string(),
                     },
                     _ => unimplemented!(),
                 },
@@ -279,6 +281,26 @@ impl From<full_moon::ast::Expression> for Expression {
             },
             full_moon::ast::Expression::Parentheses { expression, .. } => {
                 Expression::from(*expression)
+            }
+            full_moon::ast::Expression::Function(ann_func) => {
+                let mut params = Vec::new();
+                for param in ann_func.body().parameters().iter() {
+                    match param {
+                        full_moon::ast::Parameter::Ellipsis(_) => unimplemented!(),
+                        full_moon::ast::Parameter::Name(tkn) => params.push(Param {
+                            span: Span::new(
+                                Position::from(tkn.start_position()),
+                                Position::from(tkn.end_position()),
+                            ),
+                            name: tkn.to_string(),
+                        }),
+                        _ => unimplemented!(),
+                    };
+                }
+                Expression::Function {
+                    params,
+                    body: Block::from(ann_func.body().block().clone()),
+                }
             }
             _ => unimplemented!(),
         }
