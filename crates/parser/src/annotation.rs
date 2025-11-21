@@ -13,6 +13,7 @@ use nom::{
     sequence::{delimited, separated_pair},
 };
 use nom_locate::LocatedSpan;
+use tracing::{debug, warn};
 
 type AnnotationSpan<'a> = LocatedSpan<&'a str>;
 
@@ -38,10 +39,17 @@ pub fn concat_tokens<'a>(tokens: impl Iterator<Item = &'a full_moon::tokenizer::
 
 /// entry point for annotation parsing
 pub fn parse_annotation(content: &str) -> Vec<AnnotationInfo> {
-    let span = AnnotationSpan::new(content);
+    let span = AnnotationSpan::new(content);    debug!("parsing content length = {}", content.len());
     match parse_type_annotation(span) {
-        Ok((_, infos)) => infos,
-        Err(_) => Vec::new(),
+        Ok((span, infos)) => {
+            debug!("annotation parse result: {:#?}", infos);
+            debug!("annotation parse rest span: {:#?}", span);
+            infos
+        }
+        Err(e) => {
+            warn!("annotation parse to failed: {e}");
+            Vec::new()
+        }
     }
 }
 

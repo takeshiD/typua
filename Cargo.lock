@@ -1235,6 +1235,7 @@ dependencies = [
  "nom_locate",
  "pretty_assertions",
  "thiserror",
+ "tracing",
  "typua-config",
  "typua-span",
  "typua-ty",

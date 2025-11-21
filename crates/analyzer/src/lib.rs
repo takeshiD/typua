@@ -3,11 +3,11 @@ use typua_checker::Checker;
 use typua_config::LuaVersion;
 use typua_parser::parse;
 use typua_ty::diagnostic::Diagnostic;
-// use typua_ty::diagnostic::Diagnostic;
+use typua_ty::typeinfo::TypeInfo;
 //
 #[derive(Debug, Clone)]
 pub struct AnalyzeResult {
-    // type_info: TypeInfo,
+    pub type_infos: Vec<TypeInfo>,
     pub diagnotics: Vec<Diagnostic>,
 }
 
@@ -28,6 +28,7 @@ impl Analyzer {
         let check_result = checker.typecheck(&ast);
         println!("Report: {:#?}", check_result);
         AnalyzeResult {
+            type_infos: check_result.type_infos,
             diagnotics: check_result.diagnostics,
         }
     }

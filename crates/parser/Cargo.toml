@@ -22,6 +22,7 @@ nom_locate = "5.0.0"
 anyhow.workspace = true
 thiserror.workspace = true
 full_moon.workspace = true
+tracing.workspace = true
 
 [dev-dependencies]
 unindent = { workspace = true }
