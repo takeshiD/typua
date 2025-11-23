@@ -180,6 +180,7 @@ impl LanguageServer for Backend {
             }
         };
         let position = Position::from(params.text_document_position_params.position);
+        info!("hover: {}", uri);
         Ok(Some(Hover {
             contents: HoverContents::Markup(MarkupContent {
                 kind: MarkupKind::Markdown,
@@ -206,19 +207,20 @@ impl LanguageServer for Backend {
             }
         };
         let position = Position::from(params.text_document_position_params.position);
+        info!("goto difinition: {}", uri);
         Ok(Some(GotoDefinitionResponse::Array(vec![
             Location {
-                uri: Url::parse("https://github.com/takeshid/typua.git").unwrap(),
+                uri: uri.clone(),
                 range: LspRange::new(LspPosition::new(0, 0), LspPosition::new(0, 10)),
             },
             Location {
-                uri: Url::parse("https://github.com/takeshid/typua.git").unwrap(),
+                uri,
                 range: LspRange::new(LspPosition::new(2, 0), LspPosition::new(2, 10)),
             },
         ])))
     }
     async fn completion(&self, params: CompletionParams) -> LspResult<Option<CompletionResponse>> {
-        info!("{:#?}", params);
+        info!("completion {:#?}", params);
         Ok(Some(CompletionResponse::Array(vec![CompletionItem {
             label: "hello".to_string(),
             ..CompletionItem::default()

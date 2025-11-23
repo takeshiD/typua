@@ -32,4 +32,7 @@ impl Analyzer {
             diagnotics: check_result.diagnostics,
         }
     }
+    pub fn hover(&self) {}
+    pub fn goto_definition(&self) {}
+    pub fn completion(&self) {}
 }
