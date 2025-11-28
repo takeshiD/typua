@@ -3,47 +3,139 @@
 アーキテクチャはオニオンアーキテクチャをベースとしています。ドメイン部を型検査に関するものとしている。
 
 ```mermaid
+---
+config:
+  layout: tidy-tree
+---
 graph TB
-    subgraph "UserInterface"
-        LSP["Language Server"]
-        CLI["Command Line Interface"]
-    end
 
-    subgraph "Service Orchestration"
-        ANALYZE_SERVICE[Analyze Service]
-    end
-    subgraph "Workspace Management"
-        WORKSPACE[Workspace]
-    end
-    subgraph "Core Analysis"
-        PARSER[Parser]
-        BINDER[Binder]
-        TYPE_CHECKER[TypeChecker]
-    end
-    subgraph "PersistData"
-        ENV[TypeEnv]
-        CFG[FlowGraph]
-    end
-    
-    CLI --> ANALYZE_SERVICE
-    LSP --> ANALYZE_SERVICE
-    ANALYZE_SERVICE --> WORKSPACE
-    WORKSPACE --SourceCode--> PARSER
-    PARSER --TypeAST--> BINDER
-    BINDER --TypeEnv, CFG--> TYPE_CHECKER
-    PARSER --TypeAST--> TYPE_CHECKER
-    TYPE_CHECKER --> OUTPUT
-    OUTPUT --> LSP
-    
-    style LSP fill:#d4edda
-    style PARSER fill:#f8d7da
-    style BINDER fill:#f8d7da
-    style TYPE_CHECKER fill:#f8d7da
-    style OUTPUT fill:#d1ecf1
+%% ========================
+%% Color palette variables
+%% ========================
+classDef ui fill:#A43D00,stroke:#000,stroke-width:1px,color:#fff;
+classDef proto fill:#E87900,stroke:#000,stroke-width:1px,color:#fff;
+classDef app fill:#E5B800,stroke:#000,stroke-width:1px,color:#000;
+classDef domain fill:#007AC2,stroke:#000,stroke-width:1px,color:#fff;
+classDef infra fill:#004F63,stroke:#000,stroke-width:1px,color:#fff;
+
+%% ========================
+%% UI Layer
+%% ========================
+subgraph UI["UI Layer"]
+  editor["LSP Client (Editor)"]
+  cli["typua CLI"]
+end
+class UI ui
+
+%% ========================
+%% Protocol Adapter Layer
+%% ========================
+subgraph PA["Protocol Adapter Layer"]
+  lspServer["LspServer (tower-lsp / json-rpc)"]
+  cliRunner["CliCommand Runner"]
+end
+class PA proto
+
+%% ========================
+%% Application Layer
+%% ========================
+subgraph APP["Application Layer"]
+  coreBackend["CoreBackend"]
+
+  subgraph LAPP["LspApplication"]
+    lspService["LspService\n(impl LspHandler trait)\n- hover()\n- completion()\n- goto_definition()"]
+  end
+
+  subgraph FAPP["FlycheckApplication"]
+    flyService["FlycheckService\n- run_check()\n- format_diagnostics()"]
+  end
+
+  wsService["WorkspaceService\n- FileID mgmt\n- didOpen/didChange"]
+end
+class APP app
+
+%% ========================
+%% Domain Layer
+%% ========================
+subgraph DOMAIN["Domain Layer"]
+  analyzer["Analyzer\n(impl AnalysisApi)\n- analyze_hover()\n- analyze_completion()\n- collect_diagnostics()"]
+  parser["Parser\n- Source → AST"]
+  binder["Binder\n- Name resolution"]
+  tychecker["TypeChecker\n- type inference\n- annotation check"]
+  evaluator["Evaluator\n- constant folding"]
+  diagModel["Diagnostics (Domain Model)\n- Span / Severity / Message"]
+  workspaceModel["WorkspaceModel\n- FileID / Module graph"]
+end
+class DOMAIN domain
+
+%% ========================
+%% Infrastructure Layer
+%% ========================
+subgraph INFRA["Infrastructure / Database"]
+  rootDb["RootDatabase\n(FileDB / AstDB / SymbolDB / TypeDB)\n(salsa-like)"]
+  vfs["VFS / FileLoader"]
+end
+class INFRA infra
+
+
+%% ===== Connections ======
+editor --> lspServer
+cli --> cliRunner
+
+lspServer --> coreBackend
+cliRunner --> coreBackend
+
+coreBackend --> wsService
+coreBackend --> lspService
+coreBackend --> flyService
+
+lspService --> analyzer
+flyService --> analyzer
+wsService --> workspaceModel
+
+analyzer --> parser
+analyzer --> binder
+analyzer --> tychecker
+analyzer --> evaluator
+
+parser --> rootDb
+binder --> rootDb
+tychecker --> rootDb
+evaluator --> rootDb
+workspaceModel --> rootDb
+
+rootDb --> analyzer
+vfs --> rootDb
+
+analyzer --> diagModel
+diagModel --> lspService
+diagModel --> flyService
 ```
 
-## DataFlow
+詳細は[ARCHITECTURE](/docs/ARCHITECTURE.md)を参照
 
+## シンボルの解決
+goto_definitionやreferences, hoverなどで行なう
+uriとカーソル位置から該当するシンボルの情報を参照する
+
+基本的な考えはシンプルで、参照したシンボルがそのファイル内で定義されていればそのファイルのASTと型検査結果などを渡せば良い
+
+
+1. goto_definition(uri, position)
+2. uriからASTを得てpositionに相当するシンボルを取得
+3. シンボルの種類を判定する
+    - Local: ファイル内でのローカル変数, ローカル関数定義
+        - Annotation: アノテーションの型定義, クラス定義
+    - Global: グローバル変数, グローバル関数定義
+        - 他ファイルでのグローバル定義
+            - 標準ライブラリでの定義
+
+    ファイル内でlocal宣言されずに使われていればGlobal候補
+    local宣言のうちrequireであればrequire参照先のuriを取得してASTの解析をする
+4. requireの解決
+    config.runtime.pathに含まれるpathパターンをモジュールとして取り込む
+    これはLsp起動時のワークスペースルート下のモジュールを取り込む
+5. 
 
 # Roadmap
 設計検証や実装負荷のバランスから段階的な実装を考える.
