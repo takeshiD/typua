@@ -12,12 +12,14 @@ path = "src/main.rs"
 typua-lsp.workspace = true
 typua-analyzer.workspace = true
 typua-config.workspace = true
+typua-ty.workspace = true
 
 # external
 tokio.workspace = true
 tokio-macros.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
+tower-lsp.workspace = true
 anyhow.workspace = true
 clap = { version = "4.5", features = ["derive"] }
 xdg = "3.0"

@@ -11,7 +11,6 @@ path = "src/lib.rs"
 # internal
 typua-span.workspace = true
 typua-ty.workspace = true
-typua-analyzer.workspace = true
 typua-config.workspace = true
 
 # external

@@ -1,14 +1,11 @@
 [package]
 name = "typua-analyzer"
-edition.workspace = true
-rust-version.workspace = true
-repository.workspace = true
-authors.workspace = true
-license.workspace = true
-version.workspace = true
+edition = "2024"
+version = "0.1.0"
 
 [lib]
 name = "typua_analyzer"
+path = "src/lib.rs"
 
 [dependencies]
 typua-checker.workspace = true
@@ -16,4 +13,7 @@ typua-binder.workspace = true
 typua-parser.workspace = true
 typua-config.workspace = true
 typua-ty.workspace = true
+typua-lsp.workspace = true
 anyhow.workspace = true
+salsa.workspace = true
+dashmap.workspace = true

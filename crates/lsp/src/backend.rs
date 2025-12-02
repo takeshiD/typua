@@ -4,38 +4,38 @@ use std::sync::{Arc, RwLock};
 use tower_lsp::jsonrpc::Result as LspResult;
 use tower_lsp::lsp_types::{
     CompletionItem, CompletionOptions, CompletionParams, CompletionResponse,
-    Diagnostic as LspDiagnostic, DidChangeTextDocumentParams, DidCloseTextDocumentParams,
-    DidOpenTextDocumentParams, GotoDefinitionParams, GotoDefinitionResponse, Hover, HoverContents,
-    HoverParams, HoverProviderCapability, InitializeParams, InitializeResult, InitializedParams,
-    InlayHint, InlayHintParams, Location, MarkupContent, MarkupKind, MessageType, OneOf,
+    DidChangeTextDocumentParams, DidCloseTextDocumentParams, DidOpenTextDocumentParams,
+    GotoDefinitionParams, GotoDefinitionResponse, Hover, HoverContents, HoverParams,
+    HoverProviderCapability, InitializeParams, InitializeResult, InitializedParams, InlayHint,
+    InlayHintParams, Location, MarkupContent, MarkupKind, MessageType, OneOf,
     Position as LspPosition, Range as LspRange, ServerCapabilities, TextDocumentSyncCapability,
     TextDocumentSyncKind, Url, WorkDoneProgressOptions,
 };
 use tower_lsp::{Client, LanguageServer};
-use tracing::{debug, info};
-use typua_analyzer::Analyzer;
-use typua_config::LuaVersion;
+use tracing::info;
 use typua_span::Position;
 
+use crate::handler::LspHandler;
+
 #[derive(Debug)]
-pub struct Backend {
+pub struct Backend<H: LspHandler> {
     pub client: Client,
-    pub analyzer: Analyzer,
+    pub handler: H,
     pub documents: Arc<RwLock<HashMap<Url, String>>>,
 }
 
-impl Backend {
-    pub fn new(client: Client) -> Self {
+impl<H: LspHandler> Backend<H> {
+    pub fn new(client: Client, handler: H) -> Self {
         Self {
             client,
-            analyzer: Analyzer::new(),
+            handler,
             documents: Arc::new(RwLock::new(HashMap::new())),
         }
     }
 }
 
 #[tower_lsp::async_trait]
-impl LanguageServer for Backend {
+impl<H: LspHandler> LanguageServer for Backend<H> {
     async fn initialize(&self, _: InitializeParams) -> LspResult<InitializeResult> {
         info!("initialize");
         Ok(InitializeResult {
@@ -81,27 +81,16 @@ impl LanguageServer for Backend {
                 doc_map.insert(uri.clone(), content.clone());
             }
         }
-        let analyze_result = self
-            .analyzer
-            .analyze(uri.as_ref(), &content, &LuaVersion::Lua51);
         self.client
             .log_message(MessageType::INFO, format!("File open {}", uri))
             .await;
-        let diag: Vec<LspDiagnostic> = analyze_result
-            .diagnotics
-            .iter()
-            .map(|d| {
-                let d: LspDiagnostic = d.clone().into();
-                d
-            })
-            .collect();
-        for d in diag.iter() {
-            debug!(
-                "(line:{}, col:{}) {}",
-                d.range.start.line, d.range.start.character, d.message
-            );
+        if let Some(_) = self.handler.diagnostics() {
+            // debug!(
+            //     "(line:{}, col:{}) {}",
+            //     d.range.start.line, d.range.start.character, d.message
+            // );
+            self.client.publish_diagnostics(uri, vec![], None).await
         }
-        self.client.publish_diagnostics(uri, diag, None).await
     }
     async fn did_change(&self, params: DidChangeTextDocumentParams) {
         let uri = params.text_document.uri;
@@ -113,24 +102,13 @@ impl LanguageServer for Backend {
                 doc_map.insert(uri.clone(), content.clone());
             }
         }
-        let analyze_result = self
-            .analyzer
-            .analyze(uri.as_ref(), &content, &LuaVersion::Lua51);
-        let diag: Vec<LspDiagnostic> = analyze_result
-            .diagnotics
-            .iter()
-            .map(|d| {
-                let d: LspDiagnostic = d.clone().into();
-                d
-            })
-            .collect();
-        for d in diag.iter() {
-            debug!(
-                "(line:{}, col:{}) {}",
-                d.range.start.line, d.range.start.character, d.message
-            );
+        if let Some(_) = self.handler.diagnostics() {
+            // debug!(
+            //     "(line:{}, col:{}) {}",
+            //     d.range.start.line, d.range.start.character, d.message
+            // );
+            self.client.publish_diagnostics(uri, vec![], None).await
         }
-        self.client.publish_diagnostics(uri, diag, None).await
     }
     async fn did_close(&self, params: DidCloseTextDocumentParams) {
         info!("did close: {}", params.text_document.uri);
@@ -151,23 +129,11 @@ impl LanguageServer for Backend {
                 None
             }
         };
-        let inlay_hints: Vec<InlayHint> = match content {
-            Some(content) => {
-                info!("inlay hint: {} is Some", &uri);
-                self.analyzer
-                    .analyze(uri.as_ref(), &content, &LuaVersion::Lua51)
-                    .type_infos
-                    .iter()
-                    .map(InlayHint::from)
-                    .collect()
-            }
-            None => {
-                info!("inlay hint: {} is None", &uri,);
-                Vec::new()
-            }
-        };
-        debug!("inlay hints: {:#?}", inlay_hints);
-        Ok(Some(inlay_hints))
+        if let Some(_) = self.handler.inlay_hints() {
+            Ok(None)
+        } else {
+            Ok(None)
+        }
     }
     async fn hover(&self, params: HoverParams) -> LspResult<Option<Hover>> {
         let uri = params.text_document_position_params.text_document.uri;

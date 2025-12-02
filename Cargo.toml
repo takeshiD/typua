@@ -35,6 +35,8 @@ tower-lsp = "0.20"
 serde = "1.0"
 itertools = "0.14"
 indexmap = "2.12"
+salsa = "0.23.0"
+dashmap = "6"
 
 ## for development
 unindent = "0.2"

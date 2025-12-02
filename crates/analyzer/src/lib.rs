@@ -1,6 +1,12 @@
+mod db;
+mod files;
+
+use crate::db::RootDatabase;
+
 use typua_binder::Binder;
 use typua_checker::Checker;
 use typua_config::LuaVersion;
+use typua_lsp::handler::LspHandler;
 use typua_parser::parse;
 use typua_ty::diagnostic::Diagnostic;
 use typua_ty::typeinfo::TypeInfo;
@@ -11,12 +17,16 @@ pub struct AnalyzeResult {
     pub diagnotics: Vec<Diagnostic>,
 }
 
-#[derive(Debug, Default)]
-pub struct Analyzer {}
+#[derive(Clone, Default)]
+pub struct Analyzer {
+    db: RootDatabase,
+}
 
 impl Analyzer {
     pub fn new() -> Self {
-        Self {}
+        Self {
+            db: RootDatabase::default(),
+        }
     }
     pub fn analyze(&self, _uri: &str, content: &str, version: &LuaVersion) -> AnalyzeResult {
         let (ast, _errors) = parse(content, *version);
@@ -32,7 +42,4 @@ impl Analyzer {
             diagnotics: check_result.diagnostics,
         }
     }
-    pub fn hover(&self) {}
-    pub fn goto_definition(&self) {}
-    pub fn completion(&self) {}
 }

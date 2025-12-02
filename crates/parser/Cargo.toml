@@ -23,6 +23,7 @@ anyhow.workspace = true
 thiserror.workspace = true
 full_moon.workspace = true
 tracing.workspace = true
+salsa.workspace = true
 
 [dev-dependencies]
 unindent = { workspace = true }
