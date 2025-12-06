@@ -1457,6 +1457,7 @@ name = "typua-span"
 version = "0.1.4"
 dependencies = [
  "full_moon",
+ "salsa",
  "tower-lsp",
 ]
 

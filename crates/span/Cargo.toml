@@ -14,4 +14,5 @@ path = "src/lib.rs"
 [dependencies]
 full_moon.workspace = true
 tower-lsp.workspace = true
+salsa.workspace = true
 # lsp-types.workspace = true
