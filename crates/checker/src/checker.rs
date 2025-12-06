@@ -197,11 +197,13 @@ mod test_eval_var {
     use pretty_assertions::assert_eq;
     use typua_span::{Position, Span};
     #[test]
+    /// (e.g)
+    /// local x = 12
+    /// x       -- 'x' is declared, no diagnostics
     fn reference_var() {
         let mut env = TypeEnv::new();
         let _ = env.insert(&Symbol::new("x".to_string()), &TypeKind::Number);
         let mut checker = Checker::new(env);
-        // normal test: number
         let var = Variable {
             name: "x".to_string(),
             span: Span {
@@ -264,6 +266,8 @@ mod test_eval_binop {
         use typua_span::{Position, Span};
         #[test]
         // Normal Test: number + number
+        // (e.g)
+        // 12 + 12  -- is number
         fn add_numbers() {
             let env = TypeEnv::new();
             let mut checker = Checker::new(env);
@@ -297,7 +301,8 @@ mod test_eval_binop {
         }
         #[test]
         // TypeMismatch: number + bool
-        // (e.g) false + 12
+        // (e.g) 
+        // false + 12   -- TypeMismatch
         fn typemismatch_add_number_to_bool() {
             let env = TypeEnv::new();
             let mut checker = Checker::new(env);
@@ -340,7 +345,10 @@ mod test_eval_binop {
 
         #[test]
         // Normal Test: binop vars
-        // (e.g) false + 12
+        // (e.g) 
+        // local x = 12
+        // local y = 12
+        // z = x + y    -- 'z' is number
         fn typemismatch_via_vars() {
             let mut env = TypeEnv::new();
             let _ = env.insert(&Symbol::new("x".to_string()), &TypeKind::Number);
@@ -384,7 +392,9 @@ mod test_eval_binop {
         use pretty_assertions::assert_eq;
         use typua_span::{Position, Span};
         #[test]
-        // NormalTest: true or 12 => true
+        // Normal Test
+        // (e.g) 
+        // z = true or 12    -- 'z' is boolean
         fn left_true() {
             let env = TypeEnv::new();
             let mut checker = Checker::new(env);
@@ -417,7 +427,9 @@ mod test_eval_binop {
             assert_eq!(checker.diagnostics.is_empty(), true);
         }
         #[test]
-        // NormalTest: "hello" or 12 => string
+        // Normal Test
+        // (e.g) 
+        // z = "hello" or 12    -- 'z' is string
         fn left_truthy() {
             let env = TypeEnv::new();
             let mut checker = Checker::new(env);
@@ -450,7 +462,9 @@ mod test_eval_binop {
             assert_eq!(checker.diagnostics.is_empty(), true);
         }
         #[test]
-        // NormalTest: false or 12 => number
+        // Normal Test
+        // (e.g) 
+        // z = false or 12    -- 'z' is number
         fn left_false() {
             let env = TypeEnv::new();
             let mut checker = Checker::new(env);
@@ -483,7 +497,9 @@ mod test_eval_binop {
             assert_eq!(checker.diagnostics.is_empty(), true);
         }
         #[test]
-        // NormalTest: nil or 12 => number
+        // Normal Test
+        // (e.g) 
+        // z = nil or 12    -- 'z' is number
         fn left_nil() {
             let env = TypeEnv::new();
             let mut checker = Checker::new(env);
@@ -515,7 +531,11 @@ mod test_eval_binop {
             assert_eq!(checker.diagnostics.is_empty(), true);
         }
         #[test]
-        // NormalTest: x is nil but only annotated, x and 12 => number|false
+        // Normal Test
+        // (e.g) 
+        // ---@type boolean
+        // local x
+        // z = x and 12     -- 'z' is number|false
         fn left_non_assign_var() {
             let mut env = TypeEnv::new();
             let _ = env.insert(
