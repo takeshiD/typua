@@ -39,7 +39,8 @@ pub fn concat_tokens<'a>(tokens: impl Iterator<Item = &'a full_moon::tokenizer::
 
 /// entry point for annotation parsing
 pub fn parse_annotation(content: &str) -> Vec<AnnotationInfo> {
-    let span = AnnotationSpan::new(content);    debug!("parsing content length = {}", content.len());
+    let span = AnnotationSpan::new(content);
+    debug!("parsing content length = {}", content.len());
     match parse_type_annotation(span) {
         Ok((span, infos)) => {
             debug!("annotation parse result: {:#?}", infos);
@@ -257,7 +258,7 @@ mod concat_tokens {
     use unindent::unindent;
     #[test]
     fn singleline() {
-        let tokens = vec![
+        let tokens = [
             Token::new(TokenType::Whitespace {
                 characters: ShortString::new("\n"),
             }),
@@ -273,7 +274,7 @@ mod concat_tokens {
     }
     #[test]
     fn multiline() {
-        let tokens = vec![
+        let tokens = [
             Token::new(TokenType::Whitespace {
                 characters: ShortString::new("\n"),
             }),

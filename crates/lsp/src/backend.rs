@@ -84,7 +84,7 @@ impl<H: LspHandler> LanguageServer for Backend<H> {
         self.client
             .log_message(MessageType::INFO, format!("File open {}", uri))
             .await;
-        if let Some(_) = self.handler.diagnostics() {
+        if self.handler.diagnostics().is_some() {
             // debug!(
             //     "(line:{}, col:{}) {}",
             //     d.range.start.line, d.range.start.character, d.message
@@ -102,7 +102,7 @@ impl<H: LspHandler> LanguageServer for Backend<H> {
                 doc_map.insert(uri.clone(), content.clone());
             }
         }
-        if let Some(_) = self.handler.diagnostics() {
+        if self.handler.diagnostics().is_some() {
             // debug!(
             //     "(line:{}, col:{}) {}",
             //     d.range.start.line, d.range.start.character, d.message
@@ -121,7 +121,7 @@ impl<H: LspHandler> LanguageServer for Backend<H> {
     }
     async fn inlay_hint(&self, params: InlayHintParams) -> LspResult<Option<Vec<InlayHint>>> {
         let uri = params.text_document.uri;
-        let content = {
+        let _ = {
             let docs = Arc::clone(&self.documents);
             if let Ok(doc_map) = docs.read() {
                 doc_map.get(&uri).cloned()
@@ -129,15 +129,11 @@ impl<H: LspHandler> LanguageServer for Backend<H> {
                 None
             }
         };
-        if let Some(_) = self.handler.inlay_hints() {
-            Ok(None)
-        } else {
-            Ok(None)
-        }
+        Ok(None)
     }
     async fn hover(&self, params: HoverParams) -> LspResult<Option<Hover>> {
         let uri = params.text_document_position_params.text_document.uri;
-        let content = {
+        let _ = {
             let docs = Arc::clone(&self.documents);
             if let Ok(doc_map) = docs.read() {
                 doc_map.get(&uri).cloned()
@@ -145,7 +141,7 @@ impl<H: LspHandler> LanguageServer for Backend<H> {
                 None
             }
         };
-        let position = Position::from(params.text_document_position_params.position);
+        let _ = Position::from(params.text_document_position_params.position);
         info!("hover: {}", uri);
         Ok(Some(Hover {
             contents: HoverContents::Markup(MarkupContent {
@@ -164,7 +160,7 @@ impl<H: LspHandler> LanguageServer for Backend<H> {
         params: GotoDefinitionParams,
     ) -> LspResult<Option<GotoDefinitionResponse>> {
         let uri = params.text_document_position_params.text_document.uri;
-        let content = {
+        let _ = {
             let docs = Arc::clone(&self.documents);
             if let Ok(doc_map) = docs.read() {
                 doc_map.get(&uri).cloned()
@@ -172,7 +168,7 @@ impl<H: LspHandler> LanguageServer for Backend<H> {
                 None
             }
         };
-        let position = Position::from(params.text_document_position_params.position);
+        let _ = Position::from(params.text_document_position_params.position);
         info!("goto difinition: {}", uri);
         Ok(Some(GotoDefinitionResponse::Array(vec![
             Location {

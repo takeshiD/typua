@@ -1396,7 +1396,7 @@ dependencies = [
 
 [[package]]
 name = "typua-cli"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "anyhow",
  "clap",
@@ -1414,7 +1414,7 @@ dependencies = [
 
 [[package]]
 name = "typua-config"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "full_moon",
  "serde",
@@ -1454,7 +1454,7 @@ dependencies = [
 
 [[package]]
 name = "typua-span"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "full_moon",
  "tower-lsp",

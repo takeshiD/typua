@@ -17,7 +17,6 @@ impl Args {
             .usage(AnsiColor::Green.on_default().bold())
             .literal(AnsiColor::Blue.on_default().bold())
             .placeholder(AnsiColor::Cyan.on_default());
-        // let cmd = Self::command().color(ColorChoice::Always);
         let cmd = Self::command().styles(STYLES);
         Self::from_arg_matches(&cmd.get_matches())
     }

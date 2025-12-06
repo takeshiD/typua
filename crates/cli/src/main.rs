@@ -47,21 +47,25 @@ fn main() -> anyhow::Result<()> {
             }) => {
                 tracing_subscriber::fmt()
                     .with_env_filter(EnvFilter::from_default_env())
-                    .with_ansi(false)
+                    .with_ansi(true)
                     .init();
                 debug!("Cli options: path={}, version={}", path.display(), version);
-                let mut f = File::open(path)?;
-                let mut content = String::new();
-                f.read_to_string(&mut content)?;
-                let analyzer = Analyzer::new();
-                let result = analyzer.analyze("", &content, &version);
-                println!("Analyze Report");
-                for d in result.diagnotics.iter() {
-                    println!(
-                        "Diagnostic line:{} col:{}",
-                        d.span.start.line(),
-                        d.span.start.character()
-                    );
+                if path.is_dir() {
+                    unimplemented!("specified path is a directory")
+                } else if path.is_file() {
+                    let mut f = File::open(path)?;
+                    let mut content = String::new();
+                    f.read_to_string(&mut content)?;
+                    let analyzer = Analyzer::new();
+                    let result = analyzer.analyze("", &content, &version);
+                    println!("Analyze Report");
+                    for d in result.diagnotics.iter() {
+                        println!(
+                            "Diagnostic line:{} col:{}",
+                            d.span.start.line(),
+                            d.span.start.character()
+                        );
+                    }
                 }
             }
         }
