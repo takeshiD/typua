@@ -1,7 +1,7 @@
 use std::hash::Hash;
 use tower_lsp::lsp_types::{Position as LspPosition, Range as LspRange};
 
-#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Hash)]
 pub struct Span {
     pub start: Position,
     pub end: Position,
@@ -13,7 +13,7 @@ impl Span {
     }
 }
 
-#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Hash)]
 pub struct Position {
     line: u32,
     character: u32,

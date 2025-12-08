@@ -10,25 +10,8 @@ struct SourceFile {
     text: String,
 }
 
-#[salsa::tracked(debug)]
-struct ParseResult<'db> {
-    #[tracked]
-    #[returns(ref)]
-    type_ast: TypeAst,
-    #[tracked]
-    #[returns(ref)]
-    diagnostics: Vec<Diagnostic>,
-}
-
-#[salsa::tracked]
-pub fn parse(db: &dyn salsa::Database, file: SourceFile) -> ParseResult<'_> {
-    let code = file.text(db);
-    let (ast, diag) = _parse(code, LuaVersion::Lua51);
-    ParseResult::new(db, ast, diag)
-}
-
 /// entry point for parsing lua script
-fn _parse(code: &str, lua_version: LuaVersion) -> (TypeAst, Vec<Diagnostic>) {
+pub fn parse(code: &str, lua_version: LuaVersion) -> (TypeAst, Vec<Diagnostic>) {
     let result = full_moon::parse_fallible(code, lua_version.into());
     (
         TypeAst::from(result.ast().clone()),
@@ -36,7 +19,7 @@ fn _parse(code: &str, lua_version: LuaVersion) -> (TypeAst, Vec<Diagnostic>) {
             .errors()
             .iter()
             .map(|e| {
-                let (start, end) = e.range().clone();
+                let (start, end) = e.range();
                 Diagnostic::new(
                     Span::new(Position::from(start), Position::from(end)),
                     format!("{}", e),
