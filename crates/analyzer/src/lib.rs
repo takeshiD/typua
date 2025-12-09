@@ -1,5 +1,6 @@
 mod db;
 mod files;
+mod paser;
 
 use crate::db::RootDatabase;
 
