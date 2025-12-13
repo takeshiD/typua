@@ -1,13 +1,6 @@
 use tower_lsp::{LspService, Server};
-use typua_lsp::{backend::Backend, handler::EmptyHandler};
+use typua_lsp::{backend::Backend, handler::EmptyLspHandler};
 use typua_ty::error::TypuaError;
-
-async fn run_lsp_service() {
-    let empty_handler = EmptyHandler::new();
-    let (stdin, stdout) = (tokio::io::stdin(), tokio::io::stdout());
-    let (service, socket) = LspService::new(|client| Backend::new(client, empty_handler));
-    Server::new(stdin, stdout, socket).serve(service).await;
-}
 
 /// Entry point for lsp
 pub fn handle_lsp_service() {
@@ -23,4 +16,11 @@ pub fn handle_lsp_service() {
         }
     };
     runtime.block_on(run_lsp_service())
+}
+
+async fn run_lsp_service() {
+    let empty_handler = EmptyLspHandler::new();
+    let (stdin, stdout) = (tokio::io::stdin(), tokio::io::stdout());
+    let (service, socket) = LspService::new(|client| Backend::new(client, empty_handler));
+    Server::new(stdin, stdout, socket).serve(service).await;
 }

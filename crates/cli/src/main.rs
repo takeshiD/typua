@@ -4,6 +4,7 @@ mod lsp;
 use crate::args::{Args, CheckCommand, Commands};
 use crate::lsp::handle_lsp_service;
 use typua_analyzer::Analyzer;
+use typua_workspace::LspWorkspaceManager;
 
 use std::fs::File;
 use std::io::Read;
@@ -56,6 +57,7 @@ fn main() -> anyhow::Result<()> {
                     let mut f = File::open(path)?;
                     let mut content = String::new();
                     f.read_to_string(&mut content)?;
+                    let workspace_manager = LspWorkspaceManager::new();
                     let analyzer = Analyzer::new();
                     let result = analyzer.analyze("", &content, &version);
                     println!("Analyze Report");

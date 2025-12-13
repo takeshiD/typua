@@ -14,6 +14,7 @@ typua-parser.workspace = true
 typua-config.workspace = true
 typua-ty.workspace = true
 typua-lsp.workspace = true
+typua-workspace.workspace = true
 anyhow.workspace = true
 salsa.workspace = true
 dashmap.workspace = true

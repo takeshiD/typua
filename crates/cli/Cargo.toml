@@ -13,6 +13,7 @@ typua-lsp.workspace = true
 typua-analyzer.workspace = true
 typua-config.workspace = true
 typua-ty.workspace = true
+typua-workspace.workspace = true
 
 # external
 tokio.workspace = true

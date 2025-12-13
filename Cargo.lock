@@ -1371,6 +1371,7 @@ dependencies = [
  "typua-lsp",
  "typua-parser",
  "typua-ty",
+ "typua-workspace",
 ]
 
 [[package]]
@@ -1409,6 +1410,7 @@ dependencies = [
  "typua-config",
  "typua-lsp",
  "typua-ty",
+ "typua-workspace",
  "xdg",
 ]
 
@@ -1472,8 +1474,14 @@ dependencies = [
 ]
 
 [[package]]
-name = "typua-vfs"
+name = "typua-workspace"
 version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "dashmap 6.1.0",
+ "rustc-hash",
+ "typua-ty",
+]
 
 [[package]]
 name = "unicode-ident"

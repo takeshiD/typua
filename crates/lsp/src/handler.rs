@@ -18,16 +18,16 @@ pub trait LspHandler: Send + Sync + 'static {
 }
 
 #[derive(Debug, Default, Clone)]
-pub struct EmptyHandler {}
+pub struct EmptyLspHandler {}
 
-impl EmptyHandler {
+impl EmptyLspHandler {
     pub fn new() -> Self {
         info!("create empty handler");
         Self {}
     }
 }
 
-impl LspHandler for EmptyHandler {
+impl LspHandler for EmptyLspHandler {
     fn hover(&self) -> Option<HoverResult> {
         None
     }

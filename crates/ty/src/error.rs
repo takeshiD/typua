@@ -15,6 +15,8 @@ pub enum TypuaError {
         #[source]
         source: std::io::Error,
     },
+    #[error("failed to workspace operation")]
+    Workspace(#[from] WorkspaceError)
 }
 
 #[derive(Debug, Error)]
@@ -51,4 +53,10 @@ pub enum OperationError {
     AddFailed(String),
     #[error("Subtract failed")]
     SubFailed(String),
+}
+
+#[derive(Debug, Error)]
+pub enum WorkspaceError {
+    #[error("Failed to add root")]
+    FailedAddRoot(String),
 }

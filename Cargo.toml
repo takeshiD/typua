@@ -18,7 +18,7 @@ typua-parser = { path = "crates/parser" }
 typua-binder = { path = "crates/binder" }
 typua-checker = { path = "crates/checker" }
 typua-config = { path = "crates/config" }
-typua-vfs = { path = "crates/vfs" }
+typua-workspace = { path = "crates/workspace" }
 typua-lsp = { path = "crates/lsp" }
 typua-analyzer = { path = "crates/analyzer" }
 
@@ -37,6 +37,7 @@ itertools = "0.14"
 indexmap = "2.12"
 salsa = "0.23.0"
 dashmap = "6"
+rustc-hash = "2.1"
 
 ## for development
 unindent = "0.2"
