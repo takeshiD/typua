@@ -3,7 +3,7 @@ local b_ary = { true }
 
 local a = b_ary
 
----@type vim.lsp.ConfigurationParams
+---@type vim.lsp.ClientConfig
 local z = {}
 z.items = {
     scopeUri = "hello",

@@ -1,8 +1,8 @@
-use crate::annotation::{AnnotationInfo, concat_tokens, parse_annotation};
-use typua_span::{Position, Span};
+use super::annotation::{AnnotationInfo, concat_tokens, parse_annotation};
+use crate::span::{Position, Span};
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct TypeAst {
+pub struct Cst {
     pub block: Block,
 }
 
@@ -151,7 +151,7 @@ pub struct Var {
     pub symbol: String,
 }
 
-impl From<full_moon::ast::Ast> for TypeAst {
+impl From<full_moon::ast::Ast> for Cst {
     fn from(ast: full_moon::ast::Ast) -> Self {
         Self {
             block: Block::from(ast.nodes().clone()),
@@ -188,10 +188,10 @@ impl From<full_moon::ast::Stmt> for Stmt {
                     .iter()
                     .map(|t| Variable {
                         name: t.token().to_string(),
-                        span: Span {
-                            start: Position::from(t.start_position()),
-                            end: Position::from(t.end_position()),
-                        },
+                        span: Span::new(
+                            Position::from(t.start_position()),
+                            Position::from(t.end_position()),
+                        ),
                     })
                     .collect();
                 let exprs: Vec<Expression> = local_assign
@@ -215,39 +215,39 @@ impl From<full_moon::ast::Expression> for Expression {
     fn from(expr: full_moon::ast::Expression) -> Self {
         match expr {
             full_moon::ast::Expression::Number(tkn) => Expression::Number {
-                span: Span {
-                    start: Position::from(tkn.start_position()),
-                    end: Position::from(tkn.end_position()),
-                },
+                span: Span::new(
+                    Position::from(tkn.start_position()),
+                    Position::from(tkn.end_position()),
+                ),
                 val: tkn.token().to_string(),
             },
             full_moon::ast::Expression::String(tkn) => Expression::String {
-                span: Span {
-                    start: Position::from(tkn.start_position()),
-                    end: Position::from(tkn.end_position()),
-                },
+                span: Span::new(
+                    Position::from(tkn.start_position()),
+                    Position::from(tkn.end_position()),
+                ),
                 val: tkn.token().to_string(),
             },
             full_moon::ast::Expression::Symbol(tkn) => match tkn.token_type() {
                 full_moon::tokenizer::TokenType::Symbol { symbol } => match symbol {
                     full_moon::tokenizer::Symbol::False => Expression::Boolean {
-                        span: Span {
-                            start: Position::from(tkn.start_position()),
-                            end: Position::from(tkn.end_position()),
-                        },
+                        span: Span::new(
+                            Position::from(tkn.start_position()),
+                            Position::from(tkn.end_position()),
+                        ),
                         val: tkn.token().to_string(),
                     },
                     full_moon::tokenizer::Symbol::Nil => Expression::Nil {
-                        span: Span {
-                            start: Position::from(tkn.start_position()),
-                            end: Position::from(tkn.end_position()),
-                        },
+                        span: Span::new(
+                            Position::from(tkn.start_position()),
+                            Position::from(tkn.end_position()),
+                        ),
                     },
                     full_moon::tokenizer::Symbol::True => Expression::Boolean {
-                        span: Span {
-                            start: Position::from(tkn.start_position()),
-                            end: Position::from(tkn.end_position()),
-                        },
+                        span: Span::new(
+                            Position::from(tkn.start_position()),
+                            Position::from(tkn.end_position()),
+                        ),
                         val: tkn.token().to_string(),
                     },
                     _ => unimplemented!(),

@@ -1,10 +1,15 @@
-use std::hash::Hash;
-use tower_lsp::lsp_types::{Position as LspPosition, Range as LspRange};
+use tower_lsp_server::ls_types::{Position as LspPosition, Range as LspRange};
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Hash)]
+#[derive(Debug, Copy, Clone, PartialEq)]
+pub struct Position {
+    line: u32,
+    character: u32,
+}
+
+#[derive(Debug, Copy, Clone, PartialEq)]
 pub struct Span {
-    pub start: Position,
-    pub end: Position,
+    start: Position,
+    end: Position,
 }
 
 impl Span {
@@ -13,10 +18,10 @@ impl Span {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Hash)]
-pub struct Position {
-    line: u32,
-    character: u32,
+impl std::fmt::Display for Span {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(f, "Span {{start:{}, end:{}}}", self.start, self.end)
+    }
 }
 
 impl Position {
@@ -28,6 +33,12 @@ impl Position {
     }
     pub fn character(&self) -> u32 {
         self.character
+    }
+}
+
+impl std::fmt::Display for Position {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(f, "({}, {})", self.line, self.character)
     }
 }
 

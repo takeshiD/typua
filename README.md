@@ -6,56 +6,9 @@ Compatibled type-annotation syntax [lua-language-server](https://github.com/lual
 
 
 # Features
-- 🚀 Blazing Fast Typecheck
-- 💾 Low memory usage
-- 🖥️ Language Server Support
+- 🚀 Fast and Low memory usage
+- 🖥️ Easy combination with [lua-ls](https://github.com/luals/lua-language-server)
 - 🌕️ Lua5.1, 5.2, 5.3, 5.4 and LuaJIT Supported
-
-## Status
-- **Type declaration**
-    - [ ] builtin-type
-        - [x] nil
-        - [x] number
-        - [ ] integer(lua52 up to)
-        - [x] string
-        - [x] boolean
-        - [ ] function
-        - [ ] table
-    - [x] compound-type
-        - [x] union
-        - [x] array
-        - [x] tuple
-        - [x] dictionary
-        - [x] key-value table
-    - [ ] class
-    - [ ] enum
-    - [ ] alias
-    - [ ] cast
-    - [ ] type coercion(as)
-    - [ ] generic function
-    - [ ] generic class and method
-- **Type check**
-    - [x] assign-type-mismatch
-    - [ ] return-type-mismatch
-    - [ ] param-type-mismatch
-    - [ ] field-type-mismatch
-    - [ ] table-shape-mismatch
-- **Suppert Lua Version**
-    - [x] Lua51
-    - [ ] Lua52
-    - [ ] Lua53
-    - [ ] Lua54
-    - [ ] LuaJIT
-- **performance**
-    - Reducing check time
-        - [x] Full Analysis of changed file
-        - [ ] Incremental Analysis of only the changed parts
-- **LSP Support**
-    - [x] Diagnostics
-    - [ ] Inlay hints
-    - [ ] Hover
-    - [ ] References
-    - [ ] Goto Type Defenition
 
 # Install
 
@@ -79,22 +32,22 @@ vim.lsp.config("typua", {
         typua = {
             workspace = {
                 library = {
-                    vim.env.VIMRUNTIME,
+                    vim.env.VIMRUNTIME,                 -- vim api
+                    vim.fn.stdpath("data") .. "/lazy/", -- your installed plugins
                 }
-            }
+            },
         },
     },
 })
 ```
 
 # Using with `lua-ls`
-`typua` can be used in combination with `lua-ls`
+`typua` can be used in combination with `lua-ls`.
 
 ```lua
 {
     cmd = { "lua-language-server" },
     filetypes = { "lua" },
-        -- omitted...
     settings = {
         Lua = {
             hint = { -- use with typua
@@ -114,14 +67,19 @@ vim.lsp.config("typua", {
 }
 ```
 
-
-
 # Configure
-`typua`  detects `.typua.toml` in workingspace root.
-
-on the other hand, use `--config/-c` option like `typua --config your_typua.toml`.
+`typua`  detects `typua.toml` in workingspace root.
 
 ```toml
+[rules]
+assign-type-mismatch = true
+assign-type-mismatch = true
+
+[lsp]
+completions = true  # default true
+inlay-hints = true  # default true
+inlay-hints = true  # default true
+
 [workspace]
 ignore_dir = ["target"]
 use_gitignore = true
