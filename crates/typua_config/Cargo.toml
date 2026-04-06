@@ -1,0 +1,12 @@
+[package]
+name = "typua_config"
+edition.workspace = true
+version.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[dependencies]
+serde.workspace = true
+full_moon.workspace = true
