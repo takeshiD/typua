@@ -1,0 +1,15 @@
+[package]
+name = "typua_cli"
+edition.workspace = true
+version.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "typua"
+path = "src/main.rs"
+
+[dependencies]
+clap.workspace = true

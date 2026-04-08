@@ -14,13 +14,14 @@ license = "MIT"
 # internal dependencies
 typua_syntax = { path = "crates/typua_syntax" }
 typua_types = { path = "crates/typua_types" }
-# typua_cli = { path = "crates/typua_cli" }
+typua_cli = { path = "crates/typua_cli" }
 typua_config = { path = "crates/typua_config" }
 # typua_vfs = { path = "crates/typua_vfs" }
 
 # external dependencies
 ## for release
 anyhow = "1"
+clap = { version = "4", features = ["derive"] }
 full_moon = { version = "2", features = ["luajit"] }
 indexmap = "2.12"
 itertools = "0.14"

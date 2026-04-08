@@ -17,11 +17,35 @@ Compatibled type-annotation syntax [lua-language-server](https://github.com/lual
 cargo install typua
 ```
 
+# Usage
+
+## Flycheck
+```bash
+# typecheck current directory
+$ typua check
+
+# specified config file
+$ typua check -c team_typua.toml 
+
+# check files
+$ typua check main.lua src/container.lua
+
+# select format
+$ typua checi --format json
+```
+
+## Languge Server
+```bash
+# run language server via stdio
+$ typua server
+
+# run language server via stdio
+$ typua server
+```
+
 # Editor Integration
 
-## nvim
-
-### builtin lspconfig
+## neovim
 ```lua
 vim.lsp.enable("typua")
 vim.lsp.config("typua", {
@@ -30,6 +54,25 @@ vim.lsp.config("typua", {
     root_markers = { ".git", ".typua.toml" },
     settings = {
         typua = {
+            diagnostics = {
+                enable = true,
+                assign_type_mismatch = true,
+                param_type_mismatch  = true,
+                return_type_mismatch = true,
+                undefined_field      = true,
+                cast_type_mismatch   = true,
+            },
+            completion = {
+                enable = true,
+                auto_require = true,
+            },
+            inlayhints = {
+                enable = true,
+                variable_types = true,
+                return_types = true,
+                param_types = true,
+            },
+            hover.enable = true,
             workspace = {
                 library = {
                     vim.env.VIMRUNTIME,                 -- vim api
@@ -41,7 +84,7 @@ vim.lsp.config("typua", {
 })
 ```
 
-# Using with `lua-ls`
+### Using with `lua-ls`
 `typua` can be used in combination with `lua-ls`.
 
 ```lua
@@ -56,10 +99,10 @@ vim.lsp.config("typua", {
             diagnostics = { -- use with typua
                 enable = true,
                 disable = {
-                    "assign-type-mismatch",
-                    "param-type-mismatch",
-                    "return-type-mismatch",
-                    "undefined-field",
+                    "assign_type_mismatch",
+                    "param_type_mismatch",
+                    "return_type_mismatch",
+                    "undefined_field",
                 }
             }
         },
@@ -68,20 +111,35 @@ vim.lsp.config("typua", {
 ```
 
 # Configure
-`typua`  detects `typua.toml` in workingspace root.
+`typua` detects `.typua.toml` in workspace root.
 
 ```toml
-[rules]
-assign-type-mismatch = true
-assign-type-mismatch = true
-
-[lsp]
-completions = true  # default true
-inlay-hints = true  # default true
-inlay-hints = true  # default true
-
 [workspace]
 ignore_dir = ["target"]
 use_gitignore = true
+
+[diagnostics]
+enable = true
+assign_type_mismatch = true
+param_type_mismatch  = true
+return_type_mismatch = true
+undefined_field      = true
+cast_type_mismatch   = true
+
+[completions]
+enable = true
+auto_require = true
+
+[inlayhints]
+enable = true
+variable_types = true
+return_types   = true
+param_types    = true
+
+[typechecking]
+cast_number_to_integer = true
+weak_nil_check         = false
+weak_union_check       = false
+check_table_shape      = false
 ```
 
