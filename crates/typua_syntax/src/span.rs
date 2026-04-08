@@ -1,19 +1,18 @@
-use tower_lsp_server::ls_types::{Position as LspPosition, Range as LspRange};
-
 #[derive(Debug, Copy, Clone, PartialEq)]
-pub struct Position {
-    line: u32,
-    character: u32,
+pub struct ByteOffset {
+    offset: u32,
 }
 
+// half open section
+// e.g. `Span{start=0, end=10}` equals [0, 10)
 #[derive(Debug, Copy, Clone, PartialEq)]
 pub struct Span {
-    start: Position,
-    end: Position,
+    start: ByteOffset,
+    end: ByteOffset,
 }
 
 impl Span {
-    pub fn new(start: Position, end: Position) -> Self {
+    pub fn new(start: ByteOffset, end: ByteOffset) -> Self {
         Self { start, end }
     }
 }
@@ -24,21 +23,15 @@ impl std::fmt::Display for Span {
     }
 }
 
-impl Position {
-    pub fn new(line: u32, character: u32) -> Self {
-        Self { line, character }
-    }
-    pub fn line(&self) -> u32 {
-        self.line
-    }
-    pub fn character(&self) -> u32 {
-        self.character
+impl ByteOffset {
+    pub fn new(offset: u32) -> Self {
+        Self { offset }
     }
 }
 
-impl std::fmt::Display for Position {
+impl std::fmt::Display for ByteOffset {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        write!(f, "({}, {})", self.line, self.character)
+        write!(f, "{}", self.offset)
     }
 }
 
@@ -46,8 +39,8 @@ impl std::fmt::Display for Position {
 impl From<full_moon::tokenizer::Token> for Span {
     fn from(token: full_moon::tokenizer::Token) -> Self {
         Self {
-            start: Position::from(token.start_position()),
-            end: Position::from(token.end_position()),
+            start: ByteOffset::from(token.start_position()),
+            end: ByteOffset::from(token.end_position()),
         }
     }
 }
@@ -55,54 +48,16 @@ impl From<full_moon::tokenizer::Token> for Span {
 impl From<full_moon::tokenizer::TokenReference> for Span {
     fn from(token_ref: full_moon::tokenizer::TokenReference) -> Self {
         Self {
-            start: Position::from(token_ref.start_position()),
-            end: Position::from(token_ref.end_position()),
+            start: ByteOffset::from(token_ref.start_position()),
+            end: ByteOffset::from(token_ref.end_position()),
         }
     }
 }
 
-impl From<full_moon::tokenizer::Position> for Position {
+impl From<full_moon::tokenizer::Position> for ByteOffset {
     fn from(p: full_moon::tokenizer::Position) -> Self {
         Self {
-            line: p.line() as u32,
-            character: p.character() as u32,
-        }
-    }
-}
-
-// for lsp-types
-impl From<LspRange> for Span {
-    fn from(range: LspRange) -> Self {
-        Self {
-            start: Position::from(range.start),
-            end: Position::from(range.end),
-        }
-    }
-}
-
-impl From<Span> for LspRange {
-    fn from(span: Span) -> Self {
-        Self {
-            start: LspPosition::from(span.start),
-            end: LspPosition::from(span.end),
-        }
-    }
-}
-
-impl From<LspPosition> for Position {
-    fn from(position: LspPosition) -> Self {
-        Self {
-            line: position.line + 1,
-            character: position.character + 1,
-        }
-    }
-}
-
-impl From<Position> for LspPosition {
-    fn from(position: Position) -> Self {
-        Self {
-            line: position.line - 1,
-            character: position.character - 1,
+            offset: p.bytes() as u32,
         }
     }
 }

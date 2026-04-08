@@ -1,5 +1,5 @@
 use super::annotation::{AnnotationInfo, concat_tokens, parse_annotation};
-use crate::span::{Position, Span};
+use crate::span::{ByteOffset, Span};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Cst {
@@ -189,8 +189,8 @@ impl From<full_moon::ast::Stmt> for Stmt {
                     .map(|t| Variable {
                         name: t.token().to_string(),
                         span: Span::new(
-                            Position::from(t.start_position()),
-                            Position::from(t.end_position()),
+                            ByteOffset::from(t.start_position()),
+                            ByteOffset::from(t.end_position()),
                         ),
                     })
                     .collect();
@@ -216,15 +216,15 @@ impl From<full_moon::ast::Expression> for Expression {
         match expr {
             full_moon::ast::Expression::Number(tkn) => Expression::Number {
                 span: Span::new(
-                    Position::from(tkn.start_position()),
-                    Position::from(tkn.end_position()),
+                    ByteOffset::from(tkn.start_position()),
+                    ByteOffset::from(tkn.end_position()),
                 ),
                 val: tkn.token().to_string(),
             },
             full_moon::ast::Expression::String(tkn) => Expression::String {
                 span: Span::new(
-                    Position::from(tkn.start_position()),
-                    Position::from(tkn.end_position()),
+                    ByteOffset::from(tkn.start_position()),
+                    ByteOffset::from(tkn.end_position()),
                 ),
                 val: tkn.token().to_string(),
             },
@@ -232,21 +232,21 @@ impl From<full_moon::ast::Expression> for Expression {
                 full_moon::tokenizer::TokenType::Symbol { symbol } => match symbol {
                     full_moon::tokenizer::Symbol::False => Expression::Boolean {
                         span: Span::new(
-                            Position::from(tkn.start_position()),
-                            Position::from(tkn.end_position()),
+                            ByteOffset::from(tkn.start_position()),
+                            ByteOffset::from(tkn.end_position()),
                         ),
                         val: tkn.token().to_string(),
                     },
                     full_moon::tokenizer::Symbol::Nil => Expression::Nil {
                         span: Span::new(
-                            Position::from(tkn.start_position()),
-                            Position::from(tkn.end_position()),
+                            ByteOffset::from(tkn.start_position()),
+                            ByteOffset::from(tkn.end_position()),
                         ),
                     },
                     full_moon::tokenizer::Symbol::True => Expression::Boolean {
                         span: Span::new(
-                            Position::from(tkn.start_position()),
-                            Position::from(tkn.end_position()),
+                            ByteOffset::from(tkn.start_position()),
+                            ByteOffset::from(tkn.end_position()),
                         ),
                         val: tkn.token().to_string(),
                     },
@@ -289,8 +289,8 @@ impl From<full_moon::ast::Expression> for Expression {
                         full_moon::ast::Parameter::Ellipsis(_) => unimplemented!(),
                         full_moon::ast::Parameter::Name(tkn) => params.push(Param {
                             span: Span::new(
-                                Position::from(tkn.start_position()),
-                                Position::from(tkn.end_position()),
+                                ByteOffset::from(tkn.start_position()),
+                                ByteOffset::from(tkn.end_position()),
                             ),
                             name: tkn.to_string(),
                         }),

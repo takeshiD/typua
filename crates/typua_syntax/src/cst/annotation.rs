@@ -1,4 +1,4 @@
-use crate::span::{Position, Span};
+use crate::span::{ByteOffset, Span};
 use typua_types::{BoolLiteral, TypeKind};
 
 use nom::sequence::terminated;
@@ -99,13 +99,13 @@ fn parse_basictype(start_span: AnnotationSpan) -> IResult<AnnotationSpan, Annota
         map(ws(tag("any")), |_| TypeKind::Any),
     ))
     .parse(start_span)?;
-    let satrt_position = Position::new(start_span.location_line(), start_span.get_column() as u32);
-    let end_position = Position::new(end_span.location_line(), end_span.get_column() as u32);
+    let start = ByteOffset::new(start_span.location_offset() as u32);
+    let end = ByteOffset::new(end_span.location_offset() as u32);
     Ok((
         end_span,
         AnnotationInfo {
             tag: AnnotationTag::Type(ty),
-            span: Span::new(satrt_position, end_position),
+            span: Span::new(start, end),
         },
     ))
 }
@@ -116,13 +116,13 @@ fn parse_optional(start_span: AnnotationSpan) -> IResult<AnnotationSpan, Annotat
         _ => unimplemented!(),
     })
     .parse(start_span)?;
-    let satrt_position = Position::new(start_span.location_line(), start_span.get_column() as u32);
-    let end_position = Position::new(end_span.location_line(), end_span.get_column() as u32);
+    let start = ByteOffset::new(start_span.location_offset() as u32);
+    let end = ByteOffset::new(end_span.location_offset() as u32);
     Ok((
         end_span,
         AnnotationInfo {
             tag: AnnotationTag::Type(TypeKind::Union(vec![ty, TypeKind::Nil])),
-            span: Span::new(satrt_position, end_position),
+            span: Span::new(start, end),
         },
     ))
 }
@@ -141,14 +141,14 @@ fn parse_union(start_span: AnnotationSpan) -> IResult<AnnotationSpan, Annotation
         },
     )
     .parse(start_span)?;
-    let satrt_position = Position::new(start_span.location_line(), start_span.get_column() as u32);
-    let end_position = Position::new(end_span.location_line(), end_span.get_column() as u32);
+    let start = ByteOffset::new(start_span.location_offset() as u32);
+    let end = ByteOffset::new(end_span.location_offset() as u32);
     if tys.len() >= 2 {
         Ok((
             end_span,
             AnnotationInfo {
                 tag: AnnotationTag::Type(TypeKind::Union(tys)),
-                span: Span::new(satrt_position, end_position),
+                span: Span::new(start, end),
             },
         ))
     } else {
@@ -167,13 +167,13 @@ fn parse_array(start_span: AnnotationSpan) -> IResult<AnnotationSpan, Annotation
         }
     })
     .parse(start_span)?;
-    let satrt_position = Position::new(start_span.location_line(), start_span.get_column() as u32);
-    let end_position = Position::new(end_span.location_line(), end_span.get_column() as u32);
+    let start = ByteOffset::new(start_span.location_offset() as u32);
+    let end = ByteOffset::new(end_span.location_offset() as u32);
     Ok((
         end_span,
         AnnotationInfo {
             tag: AnnotationTag::Type(TypeKind::Array(Box::new(ty))),
-            span: Span::new(satrt_position, end_position),
+            span: Span::new(start, end),
         },
     ))
 }
@@ -192,8 +192,8 @@ fn parse_tabletype(start_span: AnnotationSpan) -> IResult<AnnotationSpan, Annota
         },
     )
     .parse(end_span)?;
-    let satrt_position = Position::new(start_span.location_line(), start_span.get_column() as u32);
-    let end_position = Position::new(end_span.location_line(), end_span.get_column() as u32);
+    let start = ByteOffset::new(start_span.location_offset() as u32);
+    let end = ByteOffset::new(end_span.location_offset() as u32);
     Ok((
         end_span,
         AnnotationInfo {
@@ -201,7 +201,7 @@ fn parse_tabletype(start_span: AnnotationSpan) -> IResult<AnnotationSpan, Annota
                 key: Box::new(key_ty),
                 val: Box::new(val_ty),
             }),
-            span: Span::new(satrt_position, end_position),
+            span: Span::new(start, end),
         },
     ))
 }
@@ -223,8 +223,8 @@ fn parse_dict(start_span: AnnotationSpan) -> IResult<AnnotationSpan, AnnotationI
         },
     )
     .parse(start_span)?;
-    let satrt_position = Position::new(start_span.location_line(), start_span.get_column() as u32);
-    let end_position = Position::new(end_span.location_line(), end_span.get_column() as u32);
+    let start = ByteOffset::new(start_span.location_offset() as u32);
+    let end = ByteOffset::new(end_span.location_offset() as u32);
     Ok((
         end_span,
         AnnotationInfo {
@@ -232,7 +232,7 @@ fn parse_dict(start_span: AnnotationSpan) -> IResult<AnnotationSpan, AnnotationI
                 key: Box::new(key_ty),
                 val: Box::new(val_ty),
             }),
-            span: Span::new(satrt_position, end_position),
+            span: Span::new(start, end),
         },
     ))
 }
@@ -322,7 +322,7 @@ mod parse_annotation_normal {
             ann_infos[0],
             AnnotationInfo {
                 tag: AnnotationTag::Type(TypeKind::Number),
-                span: Span::new(Position::new(1, 10), Position::new(1, 16))
+                span: Span::new(ByteOffset::new(9), ByteOffset::new(15))
             }
         );
         // multi assign
@@ -333,14 +333,14 @@ mod parse_annotation_normal {
             ann_infos[0],
             AnnotationInfo {
                 tag: AnnotationTag::Type(TypeKind::Number),
-                span: Span::new(Position::new(1, 10), Position::new(1, 16)),
+                span: Span::new(ByteOffset::new(9), ByteOffset::new(15)),
             }
         );
         assert_eq!(
             ann_infos[1],
             AnnotationInfo {
                 tag: AnnotationTag::Type(TypeKind::String),
-                span: Span::new(Position::new(1, 17), Position::new(1, 23))
+                span: Span::new(ByteOffset::new(16), ByteOffset::new(22))
             }
         );
         // optional
@@ -351,7 +351,7 @@ mod parse_annotation_normal {
             ann_infos[0],
             AnnotationInfo {
                 tag: AnnotationTag::Type(TypeKind::Union(vec![TypeKind::Number, TypeKind::Nil])),
-                span: Span::new(Position::new(1, 10), Position::new(1, 17))
+                span: Span::new(ByteOffset::new(9), ByteOffset::new(16))
             }
         );
         // union
@@ -362,7 +362,7 @@ mod parse_annotation_normal {
             ann_info[0],
             AnnotationInfo {
                 tag: AnnotationTag::Type(TypeKind::Union(vec![TypeKind::Number, TypeKind::String])),
-                span: Span::new(Position::new(1, 10), Position::new(1, 23))
+                span: Span::new(ByteOffset::new(9), ByteOffset::new(22))
             }
         );
         // if no annotation, return any type
@@ -377,7 +377,7 @@ mod parse_annotation_normal {
             ann_info[0],
             AnnotationInfo {
                 tag: AnnotationTag::Type(TypeKind::Array(Box::new(TypeKind::String))),
-                span: Span::new(Position::new(1, 10), Position::new(1, 18)),
+                span: Span::new(ByteOffset::new(9), ByteOffset::new(17)),
             }
         );
         // dictionary
@@ -391,7 +391,7 @@ mod parse_annotation_normal {
                     key: Box::new(TypeKind::String),
                     val: Box::new(TypeKind::Boolean(BoolLiteral::Any)),
                 }),
-                span: Span::new(Position::new(1, 10), Position::new(1, 31)),
+                span: Span::new(ByteOffset::new(9), ByteOffset::new(30)),
             }
         );
         // table
@@ -405,7 +405,7 @@ mod parse_annotation_normal {
                     key: Box::new(TypeKind::String),
                     val: Box::new(TypeKind::Number),
                 }),
-                span: Span::new(Position::new(1, 10), Position::new(1, 31)),
+                span: Span::new(ByteOffset::new(9), ByteOffset::new(30)),
             }
         );
     }
