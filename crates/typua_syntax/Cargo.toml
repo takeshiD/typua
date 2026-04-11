@@ -1,10 +1,10 @@
 [package]
 name = "typua_syntax"
-edition.workspace = true
 version.workspace = true
+authors.workspace = true
+edition.workspace = true
 rust-version.workspace = true
 repository.workspace = true
-authors.workspace = true
 license.workspace = true
 publish = false
 
@@ -17,9 +17,9 @@ typua_types.workspace = true
 full_moon.workspace = true
 nom.workspace = true
 nom_locate.workspace = true
-tracing.workspace = true
 tower-lsp-server.workspace = true
+tracing.workspace = true
 
 [dev-dependencies]
-unindent.workspace = true
 pretty_assertions.workspace = true
+unindent.workspace = true
