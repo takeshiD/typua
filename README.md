@@ -137,9 +137,11 @@ return_types   = true
 param_types    = true
 
 [typechecking]
-cast_number_to_integer = true
-weak_nil_check         = false
-weak_union_check       = false
-check_table_shape      = false
+cast_number_to_integer    = true
+weak_nil_check            = false
+weak_union_check          = false
+check_table_shape         = false
+
+strict_unannotated_return = true
 ```
 

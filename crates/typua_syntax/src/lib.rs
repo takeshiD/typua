@@ -1,7 +1,7 @@
-mod cst;
+pub mod cst;
 mod error;
-mod span;
-use crate::cst::tree::Cst;
+pub mod span;
+use crate::cst::Cst;
 use crate::error::SyntaxError;
 use crate::span::{ByteOffset, Span};
 
@@ -27,8 +27,7 @@ pub fn parse(code: &str, lua_version: LuaVersion) -> (Cst, Vec<SyntaxError>) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cst::annotation::{AnnotationInfo, AnnotationTag};
-    use crate::cst::tree::{Expression, LocalAssign, Stmt, Variable};
+    use crate::cst::{AnnotationInfo, AnnotationTag, Expression, LocalAssign, Stmt, Variable};
     use crate::span::{ByteOffset, Span};
     use pretty_assertions::assert_eq;
     use typua_types::TypeKind;

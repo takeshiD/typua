@@ -3,6 +3,12 @@ pub struct ByteOffset {
     offset: u32,
 }
 
+impl From<u32> for ByteOffset {
+    fn from(val: u32) -> Self {
+        ByteOffset { offset: val }
+    }
+}
+
 // half open section
 // e.g. `Span{start=0, end=10}` equals [0, 10)
 #[derive(Debug, Copy, Clone, PartialEq)]
@@ -12,8 +18,11 @@ pub struct Span {
 }
 
 impl Span {
-    pub fn new(start: ByteOffset, end: ByteOffset) -> Self {
-        Self { start, end }
+    pub fn new(start: impl Into<ByteOffset>, end: impl Into<ByteOffset>) -> Self {
+        Self {
+            start: start.into(),
+            end: end.into(),
+        }
     }
 }
 

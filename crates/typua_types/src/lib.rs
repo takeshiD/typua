@@ -12,7 +12,7 @@ pub enum TypeKind {
         params: Vec<TypeKind>,
         returns: Vec<TypeKind>,
     },
-    Class,
+    Named(Name),
     Generic(String),
     Union(Vec<TypeKind>),
     Array(Box<TypeKind>),
@@ -24,6 +24,15 @@ pub enum TypeKind {
         key: Box<TypeKind>,
         val: Box<TypeKind>,
     },
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Name(String);
+
+impl Name {
+    pub fn name(&self) -> String {
+        self.0.to_string()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -86,7 +95,7 @@ impl std::fmt::Display for TypeKind {
                     returns_string.join(",")
                 )
             }
-            TypeKind::Class => "class".to_string(),
+            TypeKind::Named(name) => name.0.to_string(),
             TypeKind::Generic(s) => s.clone(),
             TypeKind::Union(types) => {
                 let types_string: Vec<String> = types.iter().map(|ty| ty.to_string()).collect();
