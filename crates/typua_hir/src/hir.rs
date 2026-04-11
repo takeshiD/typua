@@ -1,3 +1,5 @@
+use std::fmt::write;
+
 use crate::arena::{Arena, Idx};
 
 use typua_syntax::cst;
@@ -21,6 +23,21 @@ struct LocalBinding {
 
 // struct StmtId(u32);
 type StmtId = Idx<Stmt>;
+impl std::fmt::Display for Idx<Stmt> {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(f, "StmtId({})", self.raw())
+    }
+}
+
+impl std::fmt::Debug for Idx<Stmt> {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        if f.alternate() {
+            write!(f, "StmtId({})", self.raw())
+        } else {
+            write!(f, "StmtId({})", self.raw())
+        }
+    }
+}
 
 #[derive(Debug, PartialEq)]
 enum Stmt {
@@ -37,6 +54,20 @@ enum Stmt {
 
 // struct ExprId(u32);
 type ExprId = Idx<Expr>;
+impl std::fmt::Display for Idx<Expr> {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(f, "ExprId({})", self.raw())
+    }
+}
+impl std::fmt::Debug for Idx<Expr> {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        if f.alternate() {
+            write!(f, "ExprId({})", self.raw())
+        } else {
+            write!(f, "ExprId({})", self.raw())
+        }
+    }
+}
 
 #[derive(Debug, PartialEq)]
 enum Expr {
@@ -76,8 +107,8 @@ impl HirBody {
             root: Vec::new(),
         }
     }
-    pub fn lower(&mut self, cst: &cst::Cst) -> Vec<StmtId> {
-        self.lower_block(&cst.block)
+    pub fn lower(&mut self, cst: &cst::Cst) {
+        self.root = self.lower_block(&cst.block);
     }
     fn lower_block(&mut self, block: &cst::Block) -> Vec<StmtId> {
         let stmts: Vec<StmtId> = block
@@ -166,7 +197,7 @@ mod tests {
                 cst::Variable {
                     name: "y".to_string(),
                     span: Span::new(6, 7),
-                }
+                },
             ],
             exprs: vec![cst::Expression::Number {
                 span: Span::new(10, 11),
@@ -178,7 +209,12 @@ mod tests {
         let mut hir = HirBody::new();
         let actual = hir.lower_block(&block);
         let expected: Vec<StmtId> = vec![Idx::new(0)];
+        println!("##### Statements ######");
         println!("{:#?}", hir.stmts);
+        println!("##### Expressions ######");
+        println!("{:#?}", hir.exprs);
+        println!("##### Root ######");
+        println!("{:#?}", actual);
         assert_eq!(actual, expected,);
     }
 }

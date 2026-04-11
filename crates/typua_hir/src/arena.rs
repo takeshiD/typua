@@ -1,6 +1,6 @@
 use std::marker::PhantomData;
 
-#[derive(Debug, PartialEq)]
+#[derive(PartialEq)]
 pub struct Idx<T> {
     raw: u32,
     _phantom: PhantomData<fn() -> T>,
@@ -12,6 +12,9 @@ impl<T> Idx<T> {
             raw,
             _phantom: PhantomData,
         }
+    }
+    pub fn raw(&self) -> u32 {
+        self.raw
     }
 }
 
@@ -49,4 +52,3 @@ impl<T> std::ops::IndexMut<Idx<T>> for Arena<T> {
         &mut self.data[idx.raw as usize]
     }
 }
-
