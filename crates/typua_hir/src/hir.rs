@@ -1,46 +1,54 @@
-use std::fmt::write;
-
-use crate::arena::{Arena, Idx};
-
 use typua_syntax::cst;
 use typua_types::TypeKind;
 
-#[derive(Debug, PartialEq)]
-struct Symbol(String);
+#[derive(Debug, Clone, PartialEq)]
+pub struct Symbol(String);
 
-#[derive(Debug, PartialEq)]
-struct GlobalBinding {
-    name: Symbol,
-    ann: TypeAnnotation,
-    select_index: usize,
-}
-#[derive(Debug, PartialEq)]
-struct LocalBinding {
-    name: Symbol,
-    ann: TypeAnnotation,
-    select_index: usize,
-}
-
-// struct StmtId(u32);
-type StmtId = Idx<Stmt>;
-impl std::fmt::Display for Idx<Stmt> {
+impl std::fmt::Display for Symbol {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        write!(f, "StmtId({})", self.raw())
+        write!(f, "Symbol('{}')", self.0)
     }
 }
 
-impl std::fmt::Debug for Idx<Stmt> {
+#[derive(Debug, Clone, PartialEq)]
+pub struct GlobalBinding {
+    name: Symbol,
+    ann: TypeAnnotation,
+    select_index: usize,
+}
+#[derive(Debug, Clone, PartialEq)]
+pub struct LocalBinding {
+    pub name: Symbol,
+    pub ann: TypeAnnotation,
+    pub select_index: usize,
+}
+
+#[derive(PartialEq, Clone)]
+pub struct StmtId(usize);
+
+impl StmtId {
+    pub fn id(&self) -> usize {
+        self.0
+    }
+}
+
+impl std::fmt::Display for StmtId {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        if f.alternate() {
-            write!(f, "StmtId({})", self.raw())
-        } else {
-            write!(f, "StmtId({})", self.raw())
+        write!(f, "StmtId({})", self.id())
+    }
+}
+
+impl std::fmt::Debug for StmtId {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        match f.alternate() {
+            true => write!(f, "StmtId({})", self.id()),
+            false => write!(f, "StmtId({})", self.id()),
         }
     }
 }
 
-#[derive(Debug, PartialEq)]
-enum Stmt {
+#[derive(Debug, Clone, PartialEq)]
+pub enum Stmt {
     Assign {
         binds: Vec<GlobalBinding>,
         inits: Vec<ExprId>,
@@ -52,25 +60,32 @@ enum Stmt {
     FunctionCall,
 }
 
-// struct ExprId(u32);
-type ExprId = Idx<Expr>;
-impl std::fmt::Display for Idx<Expr> {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        write!(f, "ExprId({})", self.raw())
+#[derive(PartialEq, Clone)]
+pub struct ExprId(usize);
+
+impl ExprId {
+    pub fn id(&self) -> usize {
+        self.0
     }
 }
-impl std::fmt::Debug for Idx<Expr> {
+
+// pub type ExprId = Idx<Expr>;
+impl std::fmt::Display for ExprId {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        if f.alternate() {
-            write!(f, "ExprId({})", self.raw())
-        } else {
-            write!(f, "ExprId({})", self.raw())
+        write!(f, "ExprId({})", self.id())
+    }
+}
+impl std::fmt::Debug for ExprId {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        match f.alternate() {
+            true => write!(f, "ExprId({})", self.id()),
+            false => write!(f, "ExprId({})", self.id()),
         }
     }
 }
 
-#[derive(Debug, PartialEq)]
-enum Expr {
+#[derive(Debug, Clone, PartialEq)]
+pub enum Expr {
     Number,
     String,
     Boolean,
@@ -85,8 +100,25 @@ enum Expr {
     Var,
 }
 
-#[derive(Debug, PartialEq)]
-enum TypeAnnotation {
+impl std::fmt::Display for Expr {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        let s = match self {
+            Self::Number => "number",
+            Self::String => "string",
+            Self::Boolean => "boolean",
+            Expr::Nil => "nil",
+            Expr::BinaryOperator => "binop",
+            Expr::UnaryOperator => "unop",
+            Expr::Function { params, body } => "func",
+            Expr::FunctionCall => todo!(),
+            Expr::Var => todo!(),
+        };
+        write!(f, "{}", s)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Hash, Eq)]
+pub enum TypeAnnotation {
     Unannotated,
     Number,
     Named(String),
@@ -94,21 +126,45 @@ enum TypeAnnotation {
 
 #[derive(Debug)]
 pub struct HirBody {
-    stmts: Arena<Stmt>,
-    exprs: Arena<Expr>,
-    root: Vec<StmtId>,
+    stmts: Vec<Stmt>,
+    exprs: Vec<Expr>,
+    roots: Vec<StmtId>,
 }
 
 impl HirBody {
     pub fn new() -> Self {
         Self {
-            exprs: Arena::new(),
-            stmts: Arena::new(),
-            root: Vec::new(),
+            exprs: Vec::new(),
+            stmts: Vec::new(),
+            roots: Vec::new(),
         }
     }
+    fn alloc_stmt(&mut self, stmt: Stmt) -> StmtId {
+        self.stmts.push(stmt);
+        StmtId(self.stmts.len() - 1)
+    }
+    fn alloc_expr(&mut self, expr: Expr) -> ExprId {
+        self.exprs.push(expr);
+        ExprId(self.exprs.len() - 1)
+    }
+    pub fn find_stmt(&self, stmt_id: &StmtId) -> Option<&Stmt> {
+        self.stmts.get(stmt_id.id())
+    }
+    pub fn find_expr(&self, expr_id: &ExprId) -> Option<&Expr> {
+        self.exprs.get(expr_id.id())
+    }
+    pub fn roots(&self) -> impl Iterator<Item = &StmtId> {
+        self.roots.iter()
+    }
+    // pub fn find_stmt(&self, id: &StmtId) -> &Stmt {
+    //     &self.stmts[id.id()]
+    // }
+    // pub fn find_expr(&self, id: &ExprId) -> &Expr {
+    //     &self.exprs[id.id()]
+    // }
+    // entry point for lowering
     pub fn lower(&mut self, cst: &cst::Cst) {
-        self.root = self.lower_block(&cst.block);
+        self.roots = self.lower_block(&cst.block);
     }
     fn lower_block(&mut self, block: &cst::Block) -> Vec<StmtId> {
         let stmts: Vec<StmtId> = block
@@ -125,7 +181,7 @@ impl HirBody {
             // cst::Stmt::LocalFunction(local_func) => {}
             _ => unimplemented!(),
         };
-        Some(self.stmts.alloc(s))
+        Some(self.alloc_stmt(s))
     }
     fn lower_local_assign(&mut self, local_assign: &cst::LocalAssign) -> Stmt {
         let binds: Vec<LocalBinding> = local_assign
@@ -173,7 +229,7 @@ impl HirBody {
             cst::Expression::Var { var } => Expr::Var,
             _ => unimplemented!(),
         };
-        self.exprs.alloc(e)
+        self.alloc_expr(e)
     }
     fn lower_func_body(&mut self, body: &cst::Block) -> Vec<StmtId> {
         self.lower_block(body)
@@ -185,36 +241,47 @@ mod tests {
     use super::*;
     use typua_syntax::cst;
     use typua_syntax::span::Span;
+    use typua_types::TypeKind;
     #[test]
     fn test_hir() {
+        // ---@type number
         // local x = 1
-        let stmts = vec![cst::Stmt::LocalAssign(cst::LocalAssign {
-            vars: vec![
-                cst::Variable {
+        // local y = x
+        let stmts = vec![
+            cst::Stmt::LocalAssign(cst::LocalAssign {
+                vars: vec![cst::Variable {
                     name: "x".to_string(),
                     span: Span::new(6, 7),
-                },
-                cst::Variable {
+                }],
+                exprs: vec![cst::Expression::Number {
+                    span: Span::new(10, 11),
+                    val: "1".to_string(),
+                }],
+                annotates: vec![cst::AnnotationInfo {
+                    span: Span::new(9, 15),
+                    tag: cst::AnnotationTag::Type(TypeKind::Number),
+                }],
+            }),
+            cst::Stmt::LocalAssign(cst::LocalAssign {
+                vars: vec![cst::Variable {
                     name: "y".to_string(),
                     span: Span::new(6, 7),
-                },
-            ],
-            exprs: vec![cst::Expression::Number {
-                span: Span::new(10, 11),
-                val: "1".to_string(),
-            }],
-            annotates: vec![],
-        })];
+                }],
+                exprs: vec![cst::Expression::Number {
+                    span: Span::new(10, 11),
+                    val: "1".to_string(),
+                }],
+                annotates: vec![cst::AnnotationInfo {
+                    span: Span::new(9, 15),
+                    tag: cst::AnnotationTag::Type(TypeKind::Number),
+                }],
+            }),
+        ];
         let block = cst::Block { stmts };
         let mut hir = HirBody::new();
+        // expected roots
         let actual = hir.lower_block(&block);
-        let expected: Vec<StmtId> = vec![Idx::new(0)];
-        println!("##### Statements ######");
-        println!("{:#?}", hir.stmts);
-        println!("##### Expressions ######");
-        println!("{:#?}", hir.exprs);
-        println!("##### Root ######");
-        println!("{:#?}", actual);
+        let expected: Vec<StmtId> = vec![StmtId(0), StmtId(1)];
         assert_eq!(actual, expected,);
     }
 }

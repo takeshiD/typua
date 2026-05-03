@@ -11,9 +11,11 @@ license.workspace = true
 # internal
 typua_syntax.workspace = true
 typua_types.workspace = true
+typua_config.workspace = true
 
 # external
 rustc-hash.workspace = true
 
 [dev-dependencies]
 pretty_assertions.workspace = true
+unindent.workspace = true

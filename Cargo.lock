@@ -742,8 +742,10 @@ version = "0.2.0"
 dependencies = [
  "pretty_assertions",
  "rustc-hash",
+ "typua_config",
  "typua_syntax",
  "typua_types",
+ "unindent",
 ]
 
 [[package]]

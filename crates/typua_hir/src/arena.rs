@@ -1,6 +1,6 @@
 use std::marker::PhantomData;
 
-#[derive(PartialEq)]
+#[derive(Clone, Copy, PartialEq)]
 pub struct Idx<T> {
     raw: u32,
     _phantom: PhantomData<fn() -> T>,

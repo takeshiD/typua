@@ -9,6 +9,7 @@ Compatibled type-annotation syntax [lua-language-server](https://github.com/lual
 - 🚀 Fast and Low memory usage
 - 🖥️ Easy combination with [lua-ls](https://github.com/luals/lua-language-server)
 - 🌕️ Lua5.1, 5.2, 5.3, 5.4 and LuaJIT Supported
+- 💤 Lazy loading on module resoluton
 
 # Install
 
@@ -75,8 +76,8 @@ vim.lsp.config("typua", {
             hover.enable = true,
             workspace = {
                 library = {
-                    vim.env.VIMRUNTIME,                 -- vim api
-                    vim.fn.stdpath("data") .. "/lazy/", -- your installed plugins
+                    vim.env.VIMRUNTIME,                     -- vim api
+                    vim.fn.stdpath("data") .. "/lazy/",     -- your installed plugins via lazy.nvim
                 }
             },
         },
@@ -109,6 +110,11 @@ vim.lsp.config("typua", {
     },
 }
 ```
+
+# Lazy Loading
+`Lua-ls` loads the entire `workspace.library` at startup.  This is resource-intensive because it loads modules that aren't needed. Normally, if you know the path, you can specify the library using `.luarc.json`. This might not be a major problem if you customize your `.envrc` to match each developer's environment. 
+
+However, this is cumbersome, and it can be solved by implementing lazy loading for modules required within the repository code. `typua` implements **lazy loading**, loading and resolving only the necessary modules.
 
 # Configure
 `typua` detects `.typua.toml` in workspace root.
