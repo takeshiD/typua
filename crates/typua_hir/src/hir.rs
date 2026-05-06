@@ -1,14 +1,6 @@
+use crate::symbol::Symbol;
 use typua_syntax::cst;
 use typua_types::TypeKind;
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct Symbol(String);
-
-impl std::fmt::Display for Symbol {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        write!(f, "Symbol('{}')", self.0)
-    }
-}
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct GlobalBinding {
@@ -199,7 +191,7 @@ impl HirBody {
                         _ => unimplemented!(),
                     },
                 };
-                let symbol = Symbol(v.name.to_string());
+                let symbol = Symbol::new(v.name.clone());
                 LocalBinding {
                     name: symbol,
                     ann,
@@ -223,7 +215,10 @@ impl HirBody {
             cst::Expression::String { val, .. } => Expr::String,
             cst::Expression::Boolean { val, .. } => Expr::Boolean,
             cst::Expression::Function { params, body } => Expr::Function {
-                params: params.iter().map(|p| Symbol(p.name.clone())).collect(),
+                params: params
+                    .iter()
+                    .map(|p| Symbol::new(p.name.clone()))
+                    .collect(),
                 body: self.lower_func_body(body),
             },
             cst::Expression::Var { var } => Expr::Var,

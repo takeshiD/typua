@@ -11,12 +11,12 @@ repository = "https://github.com/takeshid/typua"
 license = "MIT"
 
 [workspace.dependencies]
+# internal dependencies
 typua_cli = { path = "crates/typua_cli" }
 typua_config = { path = "crates/typua_config" }
-# internal dependencies
+typua_hir = { path = "crates/typua_hir" }
 typua_syntax = { path = "crates/typua_syntax" }
 typua_types = { path = "crates/typua_types" }
-# typua_vfs = { path = "crates/typua_vfs" }
 
 # external dependencies
 ## for release
@@ -35,7 +35,9 @@ tokio-macros = "2.6"
 tower-lsp-server = "0.23"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+dirs = "6"
+tempfile = "3"
 
-pretty_assertions = "1.4"
 ## for development
+pretty_assertions = "1.4"
 unindent = "0.2"

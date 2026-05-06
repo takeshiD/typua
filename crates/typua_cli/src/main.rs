@@ -1,6 +1,12 @@
-use std::path::PathBuf;
+mod check;
+mod server;
+mod utils;
 
+use crate::check::run_check;
+use crate::server::run_server;
 use clap::{Args, Parser, Subcommand, ValueEnum};
+use std::path::PathBuf;
+use typua_config::LuaVersion;
 
 #[derive(Debug, Parser)]
 #[command(name = "typua")]
@@ -23,7 +29,7 @@ struct CommonOption {
     #[arg(
         short = 'c',
         long = "config",
-        default_value = ".typua.toml",
+        default_value = "typua.toml",
         value_name = "FILE",
         help = "Configure filepath"
     )]
@@ -34,6 +40,15 @@ struct CommonOption {
 struct CheckOption {
     #[command(flatten)]
     common: CommonOption,
+
+    #[arg(value_name = "FILES", default_value = ".")]
+    /// Target files or directory
+    ///
+    /// Specified directory: "typua check ." run checking lua files on current working directory.
+    ///
+    /// Specified files: "typua check a.lua b.lua" run checking specified files only.
+    paths: Vec<PathBuf>,
+
     #[arg(
         short = 'v',
         long = "verbose",
@@ -41,11 +56,20 @@ struct CheckOption {
         help = "Enable verbose logging"
     )]
     verbose: bool,
+
+    #[arg(
+        long = "lua",
+        value_enum,
+        default_value_t = LuaVersionArg::LuaJIT,
+        help = "Lua version for tpyecheck"
+    )]
+    version: LuaVersionArg,
+
     #[arg(
         long = "format",
+        value_enum,
         default_value_t = OutputFormat::Full,
         value_name = "FORMAT",
-        value_enum,
         help = "Output format"
     )]
     output_format: OutputFormat,
@@ -69,13 +93,37 @@ impl std::fmt::Display for OutputFormat {
     }
 }
 
+#[derive(ValueEnum, Debug, Clone, Copy, Default)]
+enum LuaVersionArg {
+    #[default]
+    Lua51,
+    LuaJIT,
+}
+
+impl From<LuaVersionArg> for LuaVersion {
+    fn from(version: LuaVersionArg) -> LuaVersion {
+        match version {
+            LuaVersionArg::Lua51 => LuaVersion::Lua51,
+            LuaVersionArg::LuaJIT => LuaVersion::LuaJIT,
+        }
+    }
+}
+
 #[derive(Debug, Args)]
 struct ServerOption {
     #[command(flatten)]
     common: CommonOption,
 }
 
-fn main() {
+fn main() -> std::io::Result<()> {
     let args = TypuaArgs::parse();
     println!("{:#?}", args);
+    match args.commands {
+        Commands::Check(opt) => run_check(opt.paths, opt.version.into()),
+        Commands::Server(_opt) => {
+            let root = std::env::current_dir()?;
+            run_server(root)
+        }
+    }
+    Ok(())
 }

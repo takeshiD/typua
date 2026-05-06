@@ -1,6 +1,10 @@
 // mod binder;
 // mod hashmap;
 mod arena;
+mod file;
 mod hir;
 mod infer;
-mod file;
+mod resolver;
+mod symbol;
+
+pub use file::LuaFile;
