@@ -1,13 +1,15 @@
+use crate::diagnostic::{Diagnostic, IssueKind};
 use crate::hir::HirBody;
 use crate::infer::Inference;
 use typua_config::LuaVersion;
 use typua_syntax::{cst::Cst, parse};
 
+#[derive(Debug)]
 pub struct LuaFile {
     tree: Cst,
     hir: HirBody,
     inference: Inference,
-    issues: Vec<String>,
+    diagnostics: Vec<Diagnostic>,
 }
 
 impl LuaFile {
@@ -17,7 +19,12 @@ impl LuaFile {
             tree: cst,
             hir: HirBody::new(),
             inference: Inference::new(),
-            issues: Vec::new(),
+            diagnostics: errors
+                .into_iter()
+                .map(|e| {
+                    Diagnostic::new(IssueKind::SyntaxError(e.error().clone()), e.span().clone())
+                })
+                .collect(),
         }
     }
     pub fn lower(&mut self) {
@@ -29,6 +36,9 @@ impl LuaFile {
                 self.inference.infer_stmt(stmt);
             }
         }
+    }
+    pub fn diagnostics(&self) -> impl Iterator<Item = &Diagnostic> {
+        self.diagnostics.iter()
     }
 }
 

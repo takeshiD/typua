@@ -11,7 +11,7 @@ impl From<u32> for ByteOffset {
 
 // half open section
 // e.g. `Span{start=0, end=10}` equals [0, 10)
-#[derive(Debug, Copy, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Span {
     start: ByteOffset,
     end: ByteOffset,

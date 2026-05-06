@@ -6,5 +6,6 @@ mod hir;
 mod infer;
 mod resolver;
 mod symbol;
+pub mod diagnostic;
 
 pub use file::LuaFile;

@@ -125,5 +125,4 @@ fn main() -> std::io::Result<()> {
             run_server(root)
         }
     }
-    Ok(())
 }

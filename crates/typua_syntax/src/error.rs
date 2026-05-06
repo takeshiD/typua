@@ -12,6 +12,9 @@ impl SyntaxError {
     pub fn error(&self) -> &String {
         &self.err
     }
+    pub fn span(&self) -> &Span {
+        &self.span
+    }
 }
 
 impl std::fmt::Display for SyntaxError {
